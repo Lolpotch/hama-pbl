@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F6FAF4"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/tvUploadTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Mengupload Foto"
+        android:textColor="#0B7A2A"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvUploadSubtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:text="Mohon tunggu, foto sedang dikirim ke server..."
+        android:textColor="#667085"
+        android:textSize="14sp" />
+
+    <ImageView
+        android:id="@+id/imgUploadPreview"
+        android:layout_width="match_parent"
+        android:layout_height="300dp"
+        android:layout_marginTop="22dp"
+        android:background="@drawable/bg_card_white"
+        android:padding="6dp"
+        android:scaleType="centerCrop" />
+
+    <ProgressBar
+        android:id="@+id/progressUpload"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginTop="24dp"
+        android:indeterminate="true" />
+
+    <TextView
+        android:id="@+id/tvUploadStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center"
+        android:text="Upload sedang diproses..."
+        android:textColor="#344054"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

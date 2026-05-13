@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/splashRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F6FAF4">
+
+    <!-- Background selada -->
+    <ImageView
+        android:id="@+id/imgSplashBackground"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.42"
+        android:scaleType="centerCrop"
+        android:src="@drawable/plant" />
+
+    <!-- Overlay putih kehijauan -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#BDF6FAF4" />
+
+    <!-- Konten utama -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp">
+
+        <ImageView
+            android:id="@+id/imgSplashLogo"
+            android:layout_width="190dp"
+            android:layout_height="190dp"
+            android:alpha="0"
+            android:scaleX="0.75"
+            android:scaleY="0.75"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
+            android:src="@drawable/mipmap03" />
+
+        <TextView
+            android:id="@+id/tvSplashTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:alpha="0"
+            android:layout_marginTop="8dp"
+            android:text="Lokasight"
+            android:textColor="#245D23"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSplashSubtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:alpha="0"
+            android:layout_marginTop="4dp"
+            android:text="Deteksi Hama dan Penyakit pada Tanaman Selada"
+            android:textColor="#245D23"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <!-- Loading bawah -->
+    <FrameLayout
+        android:layout_width="170dp"
+        android:layout_height="5dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="64dp"
+        android:background="@drawable/bg_splash_line_track">
+
+        <View
+            android:id="@+id/viewLoadingLine"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_splash_line" />
+
+    </FrameLayout>
+
+</FrameLayout>

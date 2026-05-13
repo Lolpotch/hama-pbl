@@ -1,0 +1,47 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Base.Theme.Penyakitan" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Paksa background terang -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#F6FAF4</item>
+        <item name="android:statusBarColor">#1F6B2A</item>
+        <item name="android:windowBackground">#F6FAF4</item>
+
+        <!-- Warna utama aplikasi -->
+        <item name="colorPrimary">#0B7A2A</item>
+        <item name="colorPrimaryVariant">#1F6B2A</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+
+        <item name="colorSecondary">#0B7A2A</item>
+        <item name="colorSecondaryVariant">#1F6B2A</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+
+        <!-- Ini yang sering bikin ungu -->
+        <item name="colorAccent">#0B7A2A</item>
+        <item name="android:colorAccent">#0B7A2A</item>
+
+        <!-- Komponen Material -->
+        <item name="materialButtonStyle">@style/Widget.App.GreenButton</item>
+        <item name="progressBarStyle">@style/Widget.App.GreenProgressBar</item>
+
+        <!-- Jangan ikuti dark mode -->
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+
+    <style name="Theme.Penyakitan" parent="Base.Theme.Penyakitan" />
+
+    <style name="Widget.App.GreenButton" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">#0B7A2A</item>
+        <item name="android:backgroundTint">#0B7A2A</item>
+        <item name="cornerRadius">16dp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.App.GreenProgressBar" parent="@android:style/Widget.ProgressBar.Horizontal">
+        <item name="android:progressTint">#0B7A2A</item>
+        <item name="android:progressBackgroundTint">#E5E7EB</item>
+        <item name="android:indeterminateTint">#0B7A2A</item>
+    </style>
+
+</resources>
