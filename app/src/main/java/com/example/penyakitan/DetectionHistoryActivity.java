@@ -17,7 +17,6 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.Query;
 import com.google.firebase.database.ValueEventListener;
 
-import java.util.Map;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -63,15 +62,7 @@ public class DetectionHistoryActivity extends AppCompatActivity {
                     String className = data.child("class_name").getValue(String.class);
                     String imageUrl = data.child("image_url").getValue(String.class);
                     String mode = data.child("mode").getValue(String.class);
-                    String recommendation = getSafeString(data.child("recommendation"));
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
-                    }
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = "Belum ada rekomendasi penanganan.";
-                    }
+                    String recommendation = data.child("recommendation").getValue(String.class);
                     String source = data.child("source").getValue(String.class);
                     String timestamp = data.child("timestamp").getValue(String.class);
                     String status = data.child("status").getValue(String.class);
@@ -295,44 +286,6 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         }
 
         return builder.toString().trim();
-    }
-
-    private String getSafeString(DataSnapshot snapshot) {
-        if (snapshot == null || !snapshot.exists()) {
-            return "";
-        }
-
-        Object value = snapshot.getValue();
-
-        if (value == null) {
-            return "";
-        }
-
-        if (value instanceof String) {
-            return (String) value;
-        }
-
-        if (value instanceof Number || value instanceof Boolean) {
-            return String.valueOf(value);
-        }
-
-        if (value instanceof Map) {
-            Map<?, ?> map = (Map<?, ?>) value;
-
-            Object summary = map.get("summary");
-            if (summary != null) {
-                return String.valueOf(summary);
-            }
-
-            Object detectedClass = map.get("detected_class");
-            if (detectedClass != null) {
-                return String.valueOf(detectedClass);
-            }
-
-            return "";
-        }
-
-        return String.valueOf(value);
     }
 
     private int dpToPx(int dp) {
