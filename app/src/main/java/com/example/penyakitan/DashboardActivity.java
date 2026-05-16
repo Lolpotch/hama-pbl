@@ -24,6 +24,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.github.mikephil.charting.charts.LineChart;
 import com.github.mikephil.charting.components.XAxis;
 import com.github.mikephil.charting.data.Entry;
@@ -85,6 +86,7 @@ public class DashboardActivity extends AppCompatActivity {
     private static final String PREF_NOTIF = "notification_pref";
     private static final String PREF_READ_KEYS = "read_notification_keys";
 
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
 
     private final Runnable carouselRunnable = new Runnable() {
@@ -118,9 +120,15 @@ public class DashboardActivity extends AppCompatActivity {
         loadLatestCarouselImages();
         loadPlantPointCards();
         loadLatestSensorData();
-        loadTemperatureGraph();
-        loadHumidityGraph();
-        loadLatestDiseaseDetections();
+
+        mainHandler.postDelayed(() -> {
+            loadTemperatureGraph();
+            loadHumidityGraph();
+        }, 700);
+
+        mainHandler.postDelayed(() -> {
+            loadLatestDiseaseDetections();
+        }, 900);
     }
 
     private void initView() {
@@ -146,6 +154,8 @@ public class DashboardActivity extends AppCompatActivity {
         alertContainer = findViewById(R.id.alertContainer);
 
         viewPagerLatestImages = findViewById(R.id.viewPagerLatestImages);
+        viewPagerLatestImages.setOverScrollMode(View.OVER_SCROLL_NEVER);
+
         latestImageAdapter = new LatestImageAdapter(latestImageUrls);
         viewPagerLatestImages.setAdapter(latestImageAdapter);
 
@@ -373,7 +383,6 @@ public class DashboardActivity extends AppCompatActivity {
                                 btnMarkAllRead.setOnClickListener(v -> {
                                     markNotificationsAsRead(unreadItems);
                                     dialog.dismiss();
-
                                     updateNotificationBadge(0);
 
                                     Toast.makeText(
@@ -487,7 +496,7 @@ public class DashboardActivity extends AppCompatActivity {
         Double suhu = sensorSnapshot.child("temperature").getValue(Double.class);
         Double humidity = sensorSnapshot.child("humidity").getValue(Double.class);
 
-        String sensorTimestamp = sensorSnapshot.child("time").getValue(String.class);
+        String sensorTimestamp = getSafeString(sensorSnapshot.child("time"));
 
         if (sensorTimestamp == null || sensorTimestamp.trim().isEmpty()) {
             sensorTimestamp = "-";
@@ -544,7 +553,6 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         Collections.reverse(items);
-
         return items;
     }
 
@@ -685,8 +693,8 @@ public class DashboardActivity extends AppCompatActivity {
                 List<LatestPhoto> latestPhotos = new ArrayList<>();
 
                 for (DataSnapshot data : snapshot.getChildren()) {
-                    String imageUrl = data.child("image").getValue(String.class);
-                    String label = data.child("label").getValue(String.class);
+                    String imageUrl = getSafeString(data.child("image"));
+                    String label = getSafeString(data.child("label"));
 
                     if (imageUrl != null && !imageUrl.trim().isEmpty()) {
                         if (label == null || label.trim().isEmpty()) {
@@ -741,7 +749,9 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadPlantPointCards() {
-        Query query = cameraCapturesRef.orderByChild("uploaded_at");
+        Query query = cameraCapturesRef
+                .orderByChild("uploaded_at")
+                .limitToLast(30);
 
         query.addValueEventListener(new ValueEventListener() {
             @Override
@@ -751,9 +761,9 @@ public class DashboardActivity extends AppCompatActivity {
                 LatestPhoto hpPhoto = null;
 
                 for (DataSnapshot data : snapshot.getChildren()) {
-                    String imageUrl = data.child("image").getValue(String.class);
-                    String label = data.child("label").getValue(String.class);
-                    String time = data.child("time").getValue(String.class);
+                    String imageUrl = getSafeString(data.child("image"));
+                    String label = getSafeString(data.child("label"));
+                    String time = getSafeString(data.child("time"));
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
@@ -773,7 +783,7 @@ public class DashboardActivity extends AppCompatActivity {
                         leftPhoto = photo;
                     } else if (label.equalsIgnoreCase("B")) {
                         rightPhoto = photo;
-                    } else if (label.equalsIgnoreCase("HP")) {
+                    } else if (label.equalsIgnoreCase("HP") || label.equalsIgnoreCase("mobile")) {
                         hpPhoto = photo;
                     }
                 }
@@ -808,6 +818,9 @@ public class DashboardActivity extends AppCompatActivity {
 
         Glide.with(this)
                 .load(photo.imageUrl)
+                .thumbnail(0.25f)
+                .override(300, 220)
+                .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
                 .centerCrop()
                 .placeholder(R.drawable.plant)
                 .error(R.drawable.plant)
@@ -815,7 +828,7 @@ public class DashboardActivity extends AppCompatActivity {
 
         timeView.setText("Update: " + photo.time);
 
-        if (photo.label.equalsIgnoreCase("HP")) {
+        if (photo.label.equalsIgnoreCase("HP") || photo.label.equalsIgnoreCase("mobile")) {
             sourceView.setText("Sumber: Mobile");
             statusView.setText("Mobile");
             statusView.setTextColor(Color.parseColor("#2563EB"));
@@ -827,7 +840,9 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadLatestDiseaseDetections() {
-        Query query = diseaseResultRef.orderByChild("timestamp");
+        Query query = diseaseResultRef
+                .orderByChild("timestamp")
+                .limitToLast(100);
 
         query.addValueEventListener(new ValueEventListener() {
             @Override
@@ -841,24 +856,36 @@ public class DashboardActivity extends AppCompatActivity {
                     String detectionKey = data.getKey();
 
                     Boolean handled = data.child("handled").getValue(Boolean.class);
-                    String status = data.child("status").getValue(String.class);
+                    String status = getSafeString(data.child("status"));
+
+                    boolean isHandled = false;
 
                     if (handled != null && handled) {
-                        continue;
+                        isHandled = true;
                     }
 
                     if (status != null && status.equalsIgnoreCase("handled")) {
+                        isHandled = true;
+                    }
+
+                    if (isHandled) {
                         continue;
                     }
 
-                    String className = data.child("class_name").getValue(String.class);
-                    String imageUrl = data.child("image_url").getValue(String.class);
-                    String mode = data.child("mode").getValue(String.class);
-                    String recommendation = data.child("recommendation").getValue(String.class);
-                    String source = data.child("source").getValue(String.class);
-                    String timestamp = data.child("timestamp").getValue(String.class);
+                    String className = getSafeString(data.child("class_name"));
+                    String imageUrl = getSafeString(data.child("image_url"));
+                    String mode = getSafeString(data.child("mode"));
+                    String recommendation = getSafeString(data.child("recommendation"));
+                    String source = getSafeString(data.child("source"));
+                    String timestamp = getSafeString(data.child("timestamp"));
 
                     Double confidenceValue = data.child("confidence").getValue(Double.class);
+
+                    if (recommendation == null || recommendation.trim().isEmpty()) {
+                        recommendation = getSafeString(
+                                data.child("recommendation_detail").child("summary")
+                        );
+                    }
 
                     if (className == null || className.trim().isEmpty()) {
                         className = "Tidak Diketahui";
@@ -911,9 +938,29 @@ public class DashboardActivity extends AppCompatActivity {
 
                 Collections.reverse(tempAlerts);
 
+                int shownCount = 0;
+
                 for (DetectionAlertItem item : tempAlerts) {
+                    if (shownCount >= 5) {
+                        break;
+                    }
+
                     alertList.add(item.alert);
                     addAlertPanel(item.alert, item.detectionKey);
+                    shownCount++;
+                }
+
+                if (shownCount == 0) {
+                    AlertPanel emptyAlert = new AlertPanel(
+                            "Sistem",
+                            "Tidak Ada Deteksi Aktif",
+                            "placeholder",
+                            "-",
+                            "Semua deteksi sudah ditangani.",
+                            "Tidak ada alert baru yang perlu ditampilkan."
+                    );
+
+                    addAlertPanel(emptyAlert, null);
                 }
             }
 
@@ -954,6 +1001,44 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         return builder.toString().trim();
+    }
+
+    private String getSafeString(DataSnapshot snapshot) {
+        if (snapshot == null || !snapshot.exists()) {
+            return "";
+        }
+
+        Object value = snapshot.getValue();
+
+        if (value == null) {
+            return "";
+        }
+
+        if (value instanceof String) {
+            return (String) value;
+        }
+
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+
+        if (value instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) value;
+
+            Object summary = map.get("summary");
+            if (summary != null) {
+                return String.valueOf(summary);
+            }
+
+            Object detectedClass = map.get("detected_class");
+            if (detectedClass != null) {
+                return String.valueOf(detectedClass);
+            }
+
+            return "";
+        }
+
+        return String.valueOf(value);
     }
 
     private void loadLatestSensorData() {
@@ -1203,6 +1288,7 @@ public class DashboardActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         carouselHandler.removeCallbacks(carouselRunnable);
+        mainHandler.removeCallbacksAndMessages(null);
     }
 
     private static class LatestPhoto {
