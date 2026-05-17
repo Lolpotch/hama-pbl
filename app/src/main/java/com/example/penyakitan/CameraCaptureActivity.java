@@ -34,26 +34,14 @@ import java.net.URLEncoder;
 
 public class CameraCaptureActivity extends AppCompatActivity {
 
-    // =========================
-    // API UPLOAD FOTO HP KE GCS
-    // =========================
     private final String functionUrl =
-            "https://mobile-camera-upload-picture-990423897913.europe-west1.run.app";
+            "https://mobile-image-uploader-971770758012.asia-southeast2.run.app";
 
-    // =========================
-    // API ML INFERENCE
-    // GANTI URL INI DENGAN URL CLOUD RUN ML KAMU
-    // Harus endpoint /predict
-    // =========================
     private final String inferenceApiUrl =
-            "https://lokasight-inference-api-990423897913.asia-southeast2.run.app/predict";
+            "https://lokasight-inference-api-971770758012.asia-southeast2.run.app/predict";
 
-    // =========================
-    // FALLBACK PUBLIC URL
-    // Dipakai kalau response upload tidak mengirim image_url
-    // =========================
     private final String bucketPublicUrl =
-            "https://storage.googleapis.com/camerahama-test/mobile-captures/";
+            "https://storage.googleapis.com/lokasight/captures/";
 
     private static final int JPEG_UPLOAD_QUALITY = 85;
 
@@ -68,11 +56,16 @@ public class CameraCaptureActivity extends AppCompatActivity {
     private File capturedImageFile;
     private String localFilename;
 
+    // Mode default kalau activity dibuka tanpa pilihan
+    private String scanMode = "disease";
+
     private int lastHttpResponseCode = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        readScanModeFromIntent();
 
         permissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
@@ -121,6 +114,20 @@ public class CameraCaptureActivity extends AppCompatActivity {
         checkCameraPermission();
     }
 
+    private void readScanModeFromIntent() {
+        String modeFromIntent = getIntent().getStringExtra("scan_mode");
+
+        if (modeFromIntent != null && !modeFromIntent.trim().isEmpty()) {
+            scanMode = modeFromIntent.trim().toLowerCase();
+        }
+
+        if (!scanMode.equals("pest") && !scanMode.equals("disease")) {
+            scanMode = "disease";
+        }
+
+        Log.d("SCAN_MODE", "Mode yang dipakai: " + scanMode);
+    }
+
     private void showUploadScreen(Uri imageUri) {
         setContentView(R.layout.activity_camera_capture);
 
@@ -130,7 +137,12 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
         imgUploadPreview.setImageURI(imageUri);
         progressUpload.setIndeterminate(true);
-        tvUploadStatus.setText("Foto sedang diproses...");
+
+        if (scanMode.equals("pest")) {
+            tvUploadStatus.setText("Foto sedang diproses untuk deteksi hama...");
+        } else {
+            tvUploadStatus.setText("Foto sedang diproses untuk deteksi penyakit...");
+        }
     }
 
     private void checkCameraPermission() {
@@ -184,7 +196,12 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
     private File createImageFile() {
         long uploadedAt = System.currentTimeMillis() / 1000;
-        localFilename = "HP_" + uploadedAt + ".jpg";
+
+        if (scanMode.equals("pest")) {
+            localFilename = "HP_PEST_" + uploadedAt + ".jpg";
+        } else {
+            localFilename = "HP_DISEASE_" + uploadedAt + ".jpg";
+        }
 
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
 
@@ -268,7 +285,11 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
                 runOnUiThread(() -> {
                     if (tvUploadStatus != null) {
-                        tvUploadStatus.setText("Upload berhasil, menjalankan inference...");
+                        if (scanMode.equals("pest")) {
+                            tvUploadStatus.setText("Upload berhasil, menjalankan deteksi hama...");
+                        } else {
+                            tvUploadStatus.setText("Upload berhasil, menjalankan deteksi penyakit...");
+                        }
                     }
                 });
 
@@ -299,6 +320,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
                 String errorJson = "{"
                         + "\"error\":\"Terjadi error saat upload atau inference\","
+                        + "\"mode\":\"" + safeJsonText(scanMode) + "\","
                         + "\"detail\":\"" + safeJsonText(e.getMessage()) + "\""
                         + "}";
 
@@ -367,13 +389,12 @@ public class CameraCaptureActivity extends AppCompatActivity {
         HttpURLConnection conn = null;
 
         try {
-            /*
-             * Untuk HP/mobile pakai:
-             * mode=auto  -> disease + pest
-             * source=mobile -> supaya tidak dipaksa disease saja
-             */
-            String query = "?mode=auto&source=mobile";
+            String query = "?mode=" + URLEncoder.encode(scanMode, "UTF-8")
+                    + "&source=mobile";
+
             URL url = new URL(inferenceApiUrl + query);
+
+            Log.d("INFERENCE_URL", url.toString());
 
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
@@ -561,6 +582,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
         intent.putExtra("responseCode", responseCode);
         intent.putExtra("responseMessage", responseMessage);
+        intent.putExtra("scan_mode", scanMode);
 
         startActivity(intent);
         finish();
