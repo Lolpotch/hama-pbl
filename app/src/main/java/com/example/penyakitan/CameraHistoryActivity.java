@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class CameraHistoryActivity extends AppCompatActivity {
 
@@ -35,6 +36,7 @@ public class CameraHistoryActivity extends AppCompatActivity {
     private DatabaseReference cameraCapturesRef;
 
     private String labelFilter = "";
+    private String sourceFilter = "all";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,10 +44,18 @@ public class CameraHistoryActivity extends AppCompatActivity {
         setContentView(R.layout.activity_camera_history);
 
         labelFilter = getIntent().getStringExtra("label_filter");
+        sourceFilter = getIntent().getStringExtra("source_filter");
 
         if (labelFilter == null) {
             labelFilter = "";
         }
+
+        if (sourceFilter == null || sourceFilter.trim().isEmpty()) {
+            sourceFilter = "all";
+        }
+
+        labelFilter = labelFilter.trim();
+        sourceFilter = sourceFilter.trim().toLowerCase(Locale.US);
 
         tvTotalHistory = findViewById(R.id.tvTotalHistory);
         tvTodayHistory = findViewById(R.id.tvTodayHistory);
@@ -61,7 +71,6 @@ public class CameraHistoryActivity extends AppCompatActivity {
                 .getReference("camera_captures");
 
         setInitialSummary();
-
         loadImagesFromFirebase();
     }
 
@@ -72,7 +81,9 @@ public class CameraHistoryActivity extends AppCompatActivity {
     }
 
     private void loadImagesFromFirebase() {
-        Query query = cameraCapturesRef.orderByChild("uploaded_at");
+        Query query = cameraCapturesRef
+                .orderByChild("uploaded_at")
+                .limitToLast(300);
 
         query.addValueEventListener(new ValueEventListener() {
             @Override
@@ -83,18 +94,15 @@ public class CameraHistoryActivity extends AppCompatActivity {
                 int alertCount = 0;
 
                 for (DataSnapshot data : snapshot.getChildren()) {
-                    String filename = data.child("filename").getValue(String.class);
-                    String imageUrl = data.child("image").getValue(String.class);
-                    String label = data.child("label").getValue(String.class);
-                    String time = data.child("time").getValue(String.class);
+                    String filename = getSafeString(data.child("filename"));
+                    String imageUrl = getSafeString(data.child("image"));
+                    String label = getSafeString(data.child("label"));
+                    String source = getSafeString(data.child("source"));
+                    String time = getSafeString(data.child("time"));
+
                     Long uploadedAt = data.child("uploaded_at").getValue(Long.class);
 
-                    if (label == null) {
-                        label = "";
-                    }
-
-                    if (!labelFilter.trim().isEmpty() &&
-                            !label.equalsIgnoreCase(labelFilter)) {
+                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
                     }
 
@@ -102,22 +110,29 @@ public class CameraHistoryActivity extends AppCompatActivity {
                         filename = "Foto Kamera";
                     }
 
-                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                        continue;
+                    if (label == null) {
+                        label = "";
                     }
 
                     if (time == null || time.trim().isEmpty()) {
                         time = "-";
                     }
 
-                    String source = data.child("source").getValue(String.class);
-
                     if (source == null || source.trim().isEmpty()) {
-                        if (label.equalsIgnoreCase("HP")) {
-                            source = "HP";
+                        if (isMobileSource(label, filename, "")) {
+                            source = "Mobile";
                         } else {
                             source = "CCTV";
                         }
+                    }
+
+                    if (!labelFilter.trim().isEmpty()
+                            && !label.equalsIgnoreCase(labelFilter)) {
+                        continue;
+                    }
+
+                    if (!isAllowedBySourceFilter(label, source, filename)) {
+                        continue;
                     }
 
                     allImages.add(
@@ -125,8 +140,8 @@ public class CameraHistoryActivity extends AppCompatActivity {
                                     filename,
                                     imageUrl,
                                     time,
-                                    label,
-                                    source
+                                    normalizeLabel(label),
+                                    normalizeSource(source, label, filename)
                             )
                     );
 
@@ -147,7 +162,9 @@ public class CameraHistoryActivity extends AppCompatActivity {
                 tvTodayHistory.setText(String.valueOf(todayCount));
                 tvAlertHistory.setText(String.valueOf(alertCount));
 
-                Log.d("FIREBASE_HISTORY", "Total data: " + allImages.size());
+                Log.d("FIREBASE_HISTORY", "Total data tampil: " + allImages.size());
+                Log.d("FIREBASE_HISTORY", "Source filter: " + sourceFilter);
+                Log.d("FIREBASE_HISTORY", "Label filter: " + labelFilter);
             }
 
             @Override
@@ -159,6 +176,71 @@ public class CameraHistoryActivity extends AppCompatActivity {
                 ).show();
             }
         });
+    }
+
+    private boolean isAllowedBySourceFilter(String label, String source, String filename) {
+        if (sourceFilter == null || sourceFilter.equals("all")) {
+            return true;
+        }
+
+        boolean isMobile = isMobileSource(label, source, filename);
+
+        if (sourceFilter.equals("mobile")) {
+            return isMobile;
+        }
+
+        if (sourceFilter.equals("cctv")) {
+            return !isMobile;
+        }
+
+        return true;
+    }
+
+    private boolean isMobileSource(String label, String source, String filename) {
+        String labelLower = label == null ? "" : label.toLowerCase(Locale.US);
+        String sourceLower = source == null ? "" : source.toLowerCase(Locale.US);
+        String filenameLower = filename == null ? "" : filename.toLowerCase(Locale.US);
+
+        return labelLower.contains("mobile")
+                || labelLower.contains("hp")
+                || sourceLower.contains("mobile")
+                || sourceLower.contains("hp")
+                || filenameLower.contains("mobile")
+                || filenameLower.contains("hp_")
+                || filenameLower.contains("_hp")
+                || filenameLower.contains("hp");
+    }
+
+    private String normalizeSource(String source, String label, String filename) {
+        if (isMobileSource(label, source, filename)) {
+            return "Mobile";
+        }
+
+        return "CCTV";
+    }
+
+    private String normalizeLabel(String label) {
+        if (label == null || label.trim().isEmpty()) {
+            return "-";
+        }
+
+        if (label.equalsIgnoreCase("HP")) {
+            return "Mobile";
+        }
+
+        if (label.equalsIgnoreCase("mobile")) {
+            return "Mobile";
+        }
+
+        if (label.equalsIgnoreCase("A")) {
+            return "Depan";
+        }
+
+        if (label.equalsIgnoreCase("B")) {
+            return "Belakang";
+        }
+
+        return label;
     }
 
     private boolean isToday(Long uploadedAt) {
@@ -189,13 +271,56 @@ public class CameraHistoryActivity extends AppCompatActivity {
             return false;
         }
 
-        String lowerLabel = label.toLowerCase();
+        String lowerLabel = label.toLowerCase(Locale.US);
 
-        return lowerLabel.contains("hama") ||
-                lowerLabel.contains("penyakit") ||
-                lowerLabel.contains("pest") ||
-                lowerLabel.contains("disease") ||
-                lowerLabel.contains("detected") ||
-                lowerLabel.contains("alert");
+        return lowerLabel.contains("hama")
+                || lowerLabel.contains("penyakit")
+                || lowerLabel.contains("pest")
+                || lowerLabel.contains("disease")
+                || lowerLabel.contains("detected")
+                || lowerLabel.contains("alert");
+    }
+
+    private String getSafeString(DataSnapshot snapshot) {
+        if (snapshot == null || !snapshot.exists()) {
+            return "";
+        }
+
+        Object value = snapshot.getValue();
+
+        if (value == null) {
+            return "";
+        }
+
+        if (value instanceof String) {
+            return (String) value;
+        }
+
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+
+        if (value instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) value;
+
+            Object summary = map.get("summary");
+            if (summary != null) {
+                return String.valueOf(summary);
+            }
+
+            Object image = map.get("image");
+            if (image != null) {
+                return String.valueOf(image);
+            }
+
+            Object imageUrl = map.get("image_url");
+            if (imageUrl != null) {
+                return String.valueOf(imageUrl);
+            }
+
+            return "";
+        }
+
+        return String.valueOf(value);
     }
 }

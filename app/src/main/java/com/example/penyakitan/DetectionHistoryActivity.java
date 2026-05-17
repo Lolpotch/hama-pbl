@@ -17,11 +17,11 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.Query;
 import com.google.firebase.database.ValueEventListener;
 
-import java.util.Map;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class DetectionHistoryActivity extends AppCompatActivity {
 
@@ -29,6 +29,15 @@ public class DetectionHistoryActivity extends AppCompatActivity {
     private TextView tvTotalDetection, tvHighConfidence;
 
     private DatabaseReference diseaseResultRef;
+    private DatabaseReference pestResultRef;
+
+    private static final int LIMIT_EACH_MODE = 100;
+    private static final int MAX_RENDER_ITEMS = 100;
+
+    private final List<DetectionHistoryItem> allDetectionItems = new ArrayList<>();
+
+    private boolean diseaseLoaded = false;
+    private boolean pestLoaded = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,134 +52,345 @@ public class DetectionHistoryActivity extends AppCompatActivity {
                 .getReference("inference_result")
                 .child("disease");
 
+        pestResultRef = FirebaseDatabase.getInstance()
+                .getReference("inference_result")
+                .child("pest");
+
+        showLoadingText();
+        loadDetectionCounters();
         loadAllDetections();
     }
 
-    private void loadAllDetections() {
-        Query query = diseaseResultRef.orderByChild("timestamp");
+    private void showLoadingText() {
+        detectionContainer.removeAllViews();
 
-        query.addValueEventListener(new ValueEventListener() {
+        TextView loadingText = new TextView(this);
+        loadingText.setText("Memuat riwayat deteksi...");
+        loadingText.setTextColor(0xFF506F46);
+        loadingText.setTextSize(14);
+        loadingText.setGravity(android.view.Gravity.CENTER);
+        loadingText.setPadding(0, dpToPx(40), 0, dpToPx(40));
+
+        detectionContainer.addView(
+                loadingText,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+    }
+
+    private void loadAllDetections() {
+        allDetectionItems.clear();
+        diseaseLoaded = false;
+        pestLoaded = false;
+
+        loadDiseaseDetections();
+        loadPestDetections();
+    }
+
+    private void loadDetectionCounters() {
+        final int[] totalCount = {0};
+        final int[] highConfidenceCount = {0};
+        final boolean[] diseaseDone = {false};
+        final boolean[] pestDone = {false};
+
+        diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
-                detectionContainer.removeAllViews();
+                int[] result = countDetectionsOnly(snapshot);
 
-                List<DetectionHistoryItem> detectionList = new ArrayList<>();
+                totalCount[0] += result[0];
+                highConfidenceCount[0] += result[1];
 
-                int total = 0;
-                int highConfidence = 0;
+                diseaseDone[0] = true;
 
-                for (DataSnapshot data : snapshot.getChildren()) {
-                    String className = data.child("class_name").getValue(String.class);
-                    String imageUrl = data.child("image_url").getValue(String.class);
-                    String mode = data.child("mode").getValue(String.class);
-                    String recommendation = getSafeString(data.child("recommendation"));
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
-                    }
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = "Belum ada rekomendasi penanganan.";
-                    }
-                    String source = data.child("source").getValue(String.class);
-                    String timestamp = data.child("timestamp").getValue(String.class);
-                    String status = data.child("status").getValue(String.class);
-
-                    Boolean handledValue = data.child("handled").getValue(Boolean.class);
-                    Double confidenceValue = data.child("confidence").getValue(Double.class);
-
-                    boolean handled = false;
-
-                    if (handledValue != null && handledValue) {
-                        handled = true;
-                    }
-
-                    if (status != null && status.equalsIgnoreCase("handled")) {
-                        handled = true;
-                    }
-
-                    if (className == null || className.trim().isEmpty()) {
-                        className = "Tidak Diketahui";
-                    }
-
-                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                        imageUrl = "placeholder";
-                    }
-
-                    if (mode == null || mode.trim().isEmpty()) {
-                        mode = "disease";
-                    }
-
-                    if (source == null || source.trim().isEmpty()) {
-                        source = "kamera";
-                    }
-
-                    if (timestamp == null || timestamp.trim().isEmpty()) {
-                        timestamp = "-";
-                    }
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = "Belum ada rekomendasi penanganan.";
-                    }
-
-                    double confidencePercent = 0;
-
-                    if (confidenceValue != null) {
-                        confidencePercent = confidenceValue * 100;
-                    }
-
-                    if (confidencePercent >= 80) {
-                        highConfidence++;
-                    }
-
-                    total++;
-
-                    String displayName = formatClassName(className);
-
-                    String description =
-                            "Mode: " + mode +
-                                    "\nSource: " + source +
-                                    "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
-
-                    AlertPanel alert = new AlertPanel(
-                            source,
-                            displayName,
-                            imageUrl,
-                            timestamp,
-                            description,
-                            recommendation
-                    );
-
-                    detectionList.add(new DetectionHistoryItem(
-                            alert,
-                            handled,
-                            mode,
-                            source,
-                            String.format(Locale.US, "%.2f", confidencePercent)
-                    ));
+                if (diseaseDone[0] && pestDone[0]) {
+                    tvTotalDetection.setText(String.valueOf(totalCount[0]));
+                    tvHighConfidence.setText(String.valueOf(highConfidenceCount[0]));
                 }
-
-                Collections.reverse(detectionList);
-
-                tvTotalDetection.setText(String.valueOf(total));
-                tvHighConfidence.setText(String.valueOf(highConfidence));
-
-                showDetectionGrid(detectionList);
             }
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                Toast.makeText(
-                        DetectionHistoryActivity.this,
-                        "Gagal mengambil data deteksi: " + error.getMessage(),
-                        Toast.LENGTH_LONG
-                ).show();
+                diseaseDone[0] = true;
+
+                if (diseaseDone[0] && pestDone[0]) {
+                    tvTotalDetection.setText(String.valueOf(totalCount[0]));
+                    tvHighConfidence.setText(String.valueOf(highConfidenceCount[0]));
+                }
+            }
+        });
+
+        pestResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                int[] result = countDetectionsOnly(snapshot);
+
+                totalCount[0] += result[0];
+                highConfidenceCount[0] += result[1];
+
+                pestDone[0] = true;
+
+                if (diseaseDone[0] && pestDone[0]) {
+                    tvTotalDetection.setText(String.valueOf(totalCount[0]));
+                    tvHighConfidence.setText(String.valueOf(highConfidenceCount[0]));
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                pestDone[0] = true;
+
+                if (diseaseDone[0] && pestDone[0]) {
+                    tvTotalDetection.setText(String.valueOf(totalCount[0]));
+                    tvHighConfidence.setText(String.valueOf(highConfidenceCount[0]));
+                }
             }
         });
     }
 
+    private int[] countDetectionsOnly(DataSnapshot snapshot) {
+        int total = 0;
+        int highConfidence = 0;
+
+        for (DataSnapshot data : snapshot.getChildren()) {
+            String key = data.getKey();
+
+            if (key != null && key.equalsIgnoreCase("latest")) {
+                continue;
+            }
+
+            String className = getSafeString(data.child("class_name"));
+            String imageUrl = getSafeString(data.child("image_url"));
+            Double confidenceValue = data.child("confidence").getValue(Double.class);
+
+            if (className == null || className.trim().isEmpty()) {
+                continue;
+            }
+
+            if (className.equalsIgnoreCase("healthy")
+                    || className.equalsIgnoreCase("unknown")) {
+                continue;
+            }
+
+            if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                continue;
+            }
+
+            double confidencePercent = 0;
+
+            if (confidenceValue != null) {
+                confidencePercent = confidenceValue * 100;
+            }
+
+            total++;
+
+            if (confidencePercent >= 80) {
+                highConfidence++;
+            }
+        }
+
+        return new int[]{total, highConfidence};
+    }
+
+    private void loadDiseaseDetections() {
+        Query query = diseaseResultRef
+                .orderByChild("timestamp")
+                .limitToLast(LIMIT_EACH_MODE);
+
+        query.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                parseDetectionSnapshot(snapshot, "disease");
+                diseaseLoaded = true;
+                renderIfReady();
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                diseaseLoaded = true;
+
+                Toast.makeText(
+                        DetectionHistoryActivity.this,
+                        "Gagal mengambil data penyakit: " + error.getMessage(),
+                        Toast.LENGTH_LONG
+                ).show();
+
+                renderIfReady();
+            }
+        });
+    }
+
+    private void loadPestDetections() {
+        Query query = pestResultRef
+                .orderByChild("timestamp")
+                .limitToLast(LIMIT_EACH_MODE);
+
+        query.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                parseDetectionSnapshot(snapshot, "pest");
+                pestLoaded = true;
+                renderIfReady();
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                pestLoaded = true;
+
+                // Pest belum ada di Firebase juga tidak masalah.
+                renderIfReady();
+            }
+        });
+    }
+
+    private void parseDetectionSnapshot(DataSnapshot snapshot, String defaultMode) {
+        for (DataSnapshot data : snapshot.getChildren()) {
+            String key = data.getKey();
+
+            if (key != null && key.equalsIgnoreCase("latest")) {
+                continue;
+            }
+
+            String className = getSafeString(data.child("class_name"));
+            String imageUrl = getSafeString(data.child("image_url"));
+            String mode = getSafeString(data.child("mode"));
+            String recommendation = getSafeString(data.child("recommendation"));
+            String source = getSafeString(data.child("source"));
+            String timestamp = getSafeString(data.child("timestamp"));
+            String status = getSafeString(data.child("status"));
+
+            Boolean handledValue = data.child("handled").getValue(Boolean.class);
+            Double confidenceValue = data.child("confidence").getValue(Double.class);
+
+            if (recommendation == null || recommendation.trim().isEmpty()) {
+                recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
+            }
+
+            if (recommendation == null || recommendation.trim().isEmpty()) {
+                recommendation = "Belum ada rekomendasi penanganan.";
+            }
+
+            boolean handled = false;
+
+            if (handledValue != null && handledValue) {
+                handled = true;
+            }
+
+            if (status != null && status.equalsIgnoreCase("handled")) {
+                handled = true;
+            }
+
+            if (className == null || className.trim().isEmpty()) {
+                className = "Tidak Diketahui";
+            }
+
+            if (className.equalsIgnoreCase("healthy")
+                    || className.equalsIgnoreCase("unknown")) {
+                continue;
+            }
+
+            if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                imageUrl = "placeholder";
+            }
+
+            if (mode == null || mode.trim().isEmpty()) {
+                mode = defaultMode;
+            }
+
+            if (source == null || source.trim().isEmpty()) {
+                source = "kamera";
+            }
+
+            if (timestamp == null || timestamp.trim().isEmpty()) {
+                timestamp = "-";
+            }
+
+            double confidencePercent = 0;
+
+            if (confidenceValue != null) {
+                confidencePercent = confidenceValue * 100;
+            }
+
+            String displayName = formatClassName(className);
+
+            String description =
+                    "Mode: " + mode +
+                            "\nSource: " + source +
+                            "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
+
+            AlertPanel alert = new AlertPanel(
+                    source,
+                    displayName,
+                    imageUrl,
+                    timestamp,
+                    description,
+                    recommendation
+            );
+
+            allDetectionItems.add(new DetectionHistoryItem(
+                    alert,
+                    handled,
+                    mode,
+                    source,
+                    String.format(Locale.US, "%.2f", confidencePercent),
+                    confidencePercent,
+                    timestamp
+            ));
+        }
+    }
+
+    private void renderIfReady() {
+        if (!diseaseLoaded || !pestLoaded) {
+            return;
+        }
+
+        allDetectionItems.sort(new Comparator<DetectionHistoryItem>() {
+            @Override
+            public int compare(DetectionHistoryItem o1, DetectionHistoryItem o2) {
+                String t1 = o1.rawTimestamp == null ? "" : o1.rawTimestamp;
+                String t2 = o2.rawTimestamp == null ? "" : o2.rawTimestamp;
+
+                return t2.compareTo(t1);
+            }
+        });
+
+
+
+        List<DetectionHistoryItem> renderList = new ArrayList<>();
+
+        for (int i = 0; i < allDetectionItems.size(); i++) {
+            if (i >= MAX_RENDER_ITEMS) {
+                break;
+            }
+
+            renderList.add(allDetectionItems.get(i));
+        }
+
+        showDetectionGrid(renderList);
+    }
+
     private void showDetectionGrid(List<DetectionHistoryItem> detectionList) {
         detectionContainer.removeAllViews();
+
+        if (detectionList.isEmpty()) {
+            TextView emptyText = new TextView(this);
+            emptyText.setText("Belum ada riwayat deteksi.");
+            emptyText.setTextColor(0xFF506F46);
+            emptyText.setTextSize(14);
+            emptyText.setGravity(android.view.Gravity.CENTER);
+            emptyText.setPadding(0, dpToPx(40), 0, dpToPx(40));
+
+            detectionContainer.addView(
+                    emptyText,
+                    new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+            );
+            return;
+        }
 
         LinearLayout currentRow = null;
 
@@ -247,7 +467,6 @@ public class DetectionHistoryActivity extends AppCompatActivity {
 
         view.setSolveButtonVisible(false);
         view.setImageBadgesVisible(false);
-        view.setHandledStatus(true);
         view.setHandledStatus(item.handled);
 
         view.setOnClickListener(v -> openDetectionDetail(item));
@@ -345,19 +564,25 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         String mode;
         String source;
         String confidence;
+        double confidenceValue;
+        String rawTimestamp;
 
         DetectionHistoryItem(
                 AlertPanel alert,
                 boolean handled,
                 String mode,
                 String source,
-                String confidence
+                String confidence,
+                double confidenceValue,
+                String rawTimestamp
         ) {
             this.alert = alert;
             this.handled = handled;
             this.mode = mode;
             this.source = source;
             this.confidence = confidence;
+            this.confidenceValue = confidenceValue;
+            this.rawTimestamp = rawTimestamp;
         }
     }
 }

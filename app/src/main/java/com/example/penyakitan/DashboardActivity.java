@@ -16,6 +16,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -61,6 +62,7 @@ public class DashboardActivity extends AppCompatActivity {
 
     private ImageButton btnOpenCamera;
     private TextView btnCaptureNow;
+    private TextView btnScanPest;
 
     private LineChart temperatureGraph, humidityGraph;
     private LinearLayout alertContainer;
@@ -91,17 +93,24 @@ public class DashboardActivity extends AppCompatActivity {
     private TextView tvTotalDetectedCount;
     private TextView tvPestDetectedCount;
     private TextView tvDiseaseDetectedCount;
-    private FrameLayout btnFloatCamera, btnFloatPest, btnFloatDisease;
-    private TextView tvFloatArrow;
+
+    private ScrollView dashboardScrollView;
+    private View cameraMenuOverlay;
+    private LinearLayout floatingCameraMenu;
+    private FrameLayout btnFloatCamera;
+    private View btnFloatPest, btnFloatDisease;
+
     private boolean isFloatMenuOpen = false;
+    private boolean isFloatingHiddenAtBottom = false;
+
+    private View dotCarousel1, dotCarousel2, dotCarousel3, dotCarousel4;
+    private final List<View> carouselDots = new ArrayList<>();
 
     private static final String PREF_NOTIF = "notification_pref";
     private static final String PREF_READ_KEYS = "read_notification_keys";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
-    private View dotCarousel1, dotCarousel2, dotCarousel3, dotCarousel4;
-    private final List<View> carouselDots = new ArrayList<>();
 
     private final Runnable carouselRunnable = new Runnable() {
         @Override
@@ -164,6 +173,7 @@ public class DashboardActivity extends AppCompatActivity {
 
         btnOpenCamera = findViewById(R.id.btnOpenCamera);
         btnCaptureNow = findViewById(R.id.btnCaptureNow);
+        btnScanPest = findViewById(R.id.btnScanPest);
 
         temperatureGraph = findViewById(R.id.temperatureGraph);
         humidityGraph = findViewById(R.id.humidityGraph);
@@ -178,6 +188,9 @@ public class DashboardActivity extends AppCompatActivity {
         cardSourceCctv = findViewById(R.id.cardSourceCctv);
         cardSourceMobile = findViewById(R.id.cardSourceMobile);
 
+        tvCctvImageCount = findViewById(R.id.tvCctvImageCount);
+        tvMobileImageCount = findViewById(R.id.tvMobileImageCount);
+
         dotCarousel1 = findViewById(R.id.dotCarousel1);
         dotCarousel2 = findViewById(R.id.dotCarousel2);
         dotCarousel3 = findViewById(R.id.dotCarousel3);
@@ -189,19 +202,30 @@ public class DashboardActivity extends AppCompatActivity {
         carouselDots.add(dotCarousel3);
         carouselDots.add(dotCarousel4);
 
-        tvCctvImageCount = findViewById(R.id.tvCctvImageCount);
-        tvMobileImageCount = findViewById(R.id.tvMobileImageCount);
+        dashboardScrollView = findViewById(R.id.dashboardScrollView);
+        cameraMenuOverlay = findViewById(R.id.cameraMenuOverlay);
+        floatingCameraMenu = findViewById(R.id.floatingCameraMenu);
+        btnFloatCamera = findViewById(R.id.btnFloatCamera);
+        btnFloatPest = findViewById(R.id.btnFloatPest);
+        btnFloatDisease = findViewById(R.id.btnFloatDisease);
+
+        if (cameraMenuOverlay != null) {
+            cameraMenuOverlay.setVisibility(View.GONE);
+        }
+
+        if (btnFloatPest != null) {
+            btnFloatPest.setVisibility(View.GONE);
+        }
+
+        if (btnFloatDisease != null) {
+            btnFloatDisease.setVisibility(View.GONE);
+        }
 
         viewPagerLatestImages = findViewById(R.id.viewPagerLatestImages);
         viewPagerLatestImages.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
         latestImageAdapter = new LatestImageAdapter(latestImageUrls);
         viewPagerLatestImages.setAdapter(latestImageAdapter);
-
-        btnFloatCamera = findViewById(R.id.btnFloatCamera);
-        btnFloatPest = findViewById(R.id.btnFloatPest);
-        btnFloatDisease = findViewById(R.id.btnFloatDisease);
-        tvFloatArrow = findViewById(R.id.tvFloatArrow);
 
         viewPagerLatestImages.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override
@@ -261,15 +285,13 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void setupButton() {
-        btnOpenCamera.setOnClickListener(v -> {
-            Intent intent = new Intent(DashboardActivity.this, CameraCaptureActivity.class);
-            startActivity(intent);
-        });
+        btnOpenCamera.setOnClickListener(v -> openCameraWithMode("disease"));
 
-        btnCaptureNow.setOnClickListener(v -> {
-            Intent intent = new Intent(DashboardActivity.this, CameraCaptureActivity.class);
-            startActivity(intent);
-        });
+        btnCaptureNow.setOnClickListener(v -> openCameraWithMode("disease"));
+
+        if (btnScanPest != null) {
+            btnScanPest.setOnClickListener(v -> openCameraWithMode("pest"));
+        }
 
         tvSeeAll.setOnClickListener(v -> {
             Intent intent = new Intent(DashboardActivity.this, CameraHistoryActivity.class);
@@ -299,17 +321,29 @@ public class DashboardActivity extends AppCompatActivity {
         cardPlantRight.setOnClickListener(v -> openHistoryByLabel("B"));
         cardPlantHp.setOnClickListener(v -> openHistoryByLabel("HP"));
 
-        btnFloatCamera.setOnClickListener(v -> toggleFloatingCameraMenu());
+        if (btnFloatCamera != null) {
+            btnFloatCamera.setOnClickListener(v -> toggleFloatingCameraMenu());
+        }
 
-        btnFloatPest.setOnClickListener(v -> {
-            openCameraWithMode("pest");
-            closeFloatingCameraMenu();
-        });
+        if (cameraMenuOverlay != null) {
+            cameraMenuOverlay.setOnClickListener(v -> closeFloatingCameraMenu());
+        }
 
-        btnFloatDisease.setOnClickListener(v -> {
-            openCameraWithMode("disease");
-            closeFloatingCameraMenu();
-        });
+        if (btnFloatPest != null) {
+            btnFloatPest.setOnClickListener(v -> {
+                openCameraWithMode("pest");
+                closeFloatingCameraMenu();
+            });
+        }
+
+        if (btnFloatDisease != null) {
+            btnFloatDisease.setOnClickListener(v -> {
+                openCameraWithMode("disease");
+                closeFloatingCameraMenu();
+            });
+        }
+
+        setupFloatingButtonScrollBehavior();
     }
 
     private void toggleFloatingCameraMenu() {
@@ -318,6 +352,147 @@ public class DashboardActivity extends AppCompatActivity {
         } else {
             openFloatingCameraMenu();
         }
+    }
+
+    private void openFloatingCameraMenu() {
+        if (isFloatingHiddenAtBottom) {
+            return;
+        }
+
+        isFloatMenuOpen = true;
+
+        if (cameraMenuOverlay != null) {
+            cameraMenuOverlay.setVisibility(View.VISIBLE);
+            cameraMenuOverlay.setAlpha(0f);
+            cameraMenuOverlay.animate()
+                    .alpha(1f)
+                    .setDuration(180)
+                    .start();
+        }
+
+        if (btnFloatDisease != null) {
+            btnFloatDisease.setVisibility(View.VISIBLE);
+            btnFloatDisease.setAlpha(0f);
+            btnFloatDisease.setTranslationY(40f);
+            btnFloatDisease.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(180)
+                    .start();
+        }
+
+        if (btnFloatPest != null) {
+            btnFloatPest.setVisibility(View.VISIBLE);
+            btnFloatPest.setAlpha(0f);
+            btnFloatPest.setTranslationY(40f);
+            btnFloatPest.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(220)
+                    .start();
+        }
+
+        if (btnFloatCamera != null) {
+            btnFloatCamera.animate()
+                    .rotation(45f)
+                    .setDuration(180)
+                    .start();
+        }
+    }
+
+    private void closeFloatingCameraMenu() {
+        isFloatMenuOpen = false;
+
+        if (btnFloatPest != null) {
+            btnFloatPest.animate()
+                    .alpha(0f)
+                    .translationY(40f)
+                    .setDuration(140)
+                    .withEndAction(() -> btnFloatPest.setVisibility(View.GONE))
+                    .start();
+        }
+
+        if (btnFloatDisease != null) {
+            btnFloatDisease.animate()
+                    .alpha(0f)
+                    .translationY(40f)
+                    .setDuration(140)
+                    .withEndAction(() -> btnFloatDisease.setVisibility(View.GONE))
+                    .start();
+        }
+
+        if (cameraMenuOverlay != null) {
+            cameraMenuOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(140)
+                    .withEndAction(() -> cameraMenuOverlay.setVisibility(View.GONE))
+                    .start();
+        }
+
+        if (btnFloatCamera != null) {
+            btnFloatCamera.animate()
+                    .rotation(0f)
+                    .setDuration(180)
+                    .start();
+        }
+    }
+
+    private void openCameraWithMode(String mode) {
+        Intent intent = new Intent(DashboardActivity.this, CameraCaptureActivity.class);
+        intent.putExtra("scan_mode", mode);
+        startActivity(intent);
+    }
+
+    private void setupFloatingButtonScrollBehavior() {
+        if (dashboardScrollView == null || floatingCameraMenu == null) {
+            return;
+        }
+
+        dashboardScrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            View child = dashboardScrollView.getChildAt(0);
+
+            if (child == null) {
+                return;
+            }
+
+            int scrollY = dashboardScrollView.getScrollY();
+            int scrollViewHeight = dashboardScrollView.getHeight();
+            int contentHeight = child.getHeight();
+
+            boolean isAtBottom = scrollY + scrollViewHeight >= contentHeight - dpToPx(80);
+
+            if (isAtBottom) {
+                isFloatingHiddenAtBottom = true;
+
+                if (isFloatMenuOpen) {
+                    closeFloatingCameraMenu();
+                }
+
+                if (floatingCameraMenu.getVisibility() == View.VISIBLE) {
+                    floatingCameraMenu.animate()
+                            .alpha(0f)
+                            .translationY(dpToPx(100))
+                            .setDuration(180)
+                            .withEndAction(() -> floatingCameraMenu.setVisibility(View.GONE))
+                            .start();
+                }
+
+            } else {
+                isFloatingHiddenAtBottom = false;
+
+                if (floatingCameraMenu.getVisibility() != View.VISIBLE) {
+                    floatingCameraMenu.setVisibility(View.VISIBLE);
+                    floatingCameraMenu.setAlpha(0f);
+                    floatingCameraMenu.setTranslationY(dpToPx(100));
+                }
+
+                floatingCameraMenu.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(180)
+                        .start();
+            }
+        });
     }
 
     private void updateCarouselDots(int activePosition) {
@@ -340,81 +515,6 @@ public class DashboardActivity extends AppCompatActivity {
                 dot.setVisibility(View.GONE);
             }
         }
-    }
-
-    private void openFloatingCameraMenu() {
-        isFloatMenuOpen = true;
-
-        btnFloatPest.setVisibility(View.VISIBLE);
-        btnFloatDisease.setVisibility(View.VISIBLE);
-        tvFloatArrow.setVisibility(View.VISIBLE);
-
-        btnFloatPest.setAlpha(0f);
-        btnFloatDisease.setAlpha(0f);
-        tvFloatArrow.setAlpha(0f);
-
-        btnFloatPest.setTranslationY(30f);
-        btnFloatDisease.setTranslationY(30f);
-        tvFloatArrow.setTranslationY(20f);
-
-        btnFloatPest.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(180)
-                .start();
-
-        btnFloatDisease.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(220)
-                .start();
-
-        tvFloatArrow.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(160)
-                .start();
-
-        btnFloatCamera.animate()
-                .rotation(45f)
-                .setDuration(180)
-                .start();
-    }
-
-    private void closeFloatingCameraMenu() {
-        isFloatMenuOpen = false;
-
-        btnFloatPest.animate()
-                .alpha(0f)
-                .translationY(30f)
-                .setDuration(150)
-                .withEndAction(() -> btnFloatPest.setVisibility(View.GONE))
-                .start();
-
-        btnFloatDisease.animate()
-                .alpha(0f)
-                .translationY(30f)
-                .setDuration(150)
-                .withEndAction(() -> btnFloatDisease.setVisibility(View.GONE))
-                .start();
-
-        tvFloatArrow.animate()
-                .alpha(0f)
-                .translationY(20f)
-                .setDuration(130)
-                .withEndAction(() -> tvFloatArrow.setVisibility(View.GONE))
-                .start();
-
-        btnFloatCamera.animate()
-                .rotation(0f)
-                .setDuration(180)
-                .start();
-    }
-
-    private void openCameraWithMode(String mode) {
-        Intent intent = new Intent(DashboardActivity.this, CameraCaptureActivity.class);
-        intent.putExtra("scan_mode", mode);
-        startActivity(intent);
     }
 
     private void openHistoryByLabel(String label) {
@@ -1128,14 +1228,14 @@ public class DashboardActivity extends AppCompatActivity {
                     }
                 }
 
-                tvCctvImageCount.setText(cctvCount + " gambar dari CCTV");
-                tvMobileImageCount.setText(mobileCount + " gambar dari Mobile");
+                tvCctvImageCount.setText(cctvCount + " gambar");
+                tvMobileImageCount.setText(mobileCount + " gambar");
             }
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                tvCctvImageCount.setText("Gagal memuat jumlah CCTV");
-                tvMobileImageCount.setText("Gagal memuat jumlah Mobile");
+                tvCctvImageCount.setText("Gagal memuat");
+                tvMobileImageCount.setText("Gagal memuat");
             }
         });
     }
