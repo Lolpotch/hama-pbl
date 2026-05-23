@@ -51,6 +51,27 @@
                 app:tint="#FFFFFF" />
 
             <FrameLayout
+                android:id="@+id/btnLogout"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="16dp"
+                android:layout_marginEnd="82dp"
+                android:background="@drawable/bg_circle_white"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackgroundBorderless">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/exit"
+                    app:tint="#D92D20" />
+
+            </FrameLayout>
+
+            <FrameLayout
                 android:id="@+id/btnNotification"
                 android:layout_width="54dp"
                 android:layout_height="54dp"
@@ -71,16 +92,19 @@
 
                 <TextView
                     android:id="@+id/tvNotificationBadge"
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
                     android:layout_gravity="top|end"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/bg_badge_red"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/bg_notification_badge"
                     android:gravity="center"
+                    android:minWidth="22dp"
+                    android:paddingStart="3dp"
+                    android:paddingEnd="3dp"
                     android:text="0"
                     android:textColor="#FFFFFF"
-                    android:textSize="10sp"
+                    android:textSize="11sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
 
@@ -144,7 +168,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="Terakhir diupdate 14 detik yang lalu"
+                    android:text="Terakhir diupdate -"
                     android:textColor="#EAF5EA"
                     android:textSize="13sp" />
 
@@ -176,9 +200,13 @@
                 android:padding="18dp">
 
                 <LinearLayout
+                    android:id="@+id/cardTemperatureSensor"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:orientation="vertical">
 
                     <LinearLayout
@@ -232,9 +260,13 @@
                     android:background="#E3E6E1" />
 
                 <LinearLayout
+                    android:id="@+id/cardHumiditySensor"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:orientation="vertical">
 
                     <LinearLayout
@@ -304,7 +336,7 @@
             </LinearLayout>
 
             <!-- ===================================================== -->
-            <!-- BANNER 4 FOTO TERBARU -->
+            <!-- BANNER FOTO TERBARU -->
             <!-- ===================================================== -->
             <FrameLayout
                 android:layout_width="match_parent"
@@ -346,7 +378,6 @@
 
             </FrameLayout>
 
-            <!-- indikator titik -->
             <LinearLayout
                 android:id="@+id/carouselDotContainer"
                 android:layout_width="match_parent"
@@ -516,7 +547,7 @@
             </LinearLayout>
 
             <!-- ===================================================== -->
-            <!-- DETEKSI TERBARU -->
+            <!-- RIWAYAT DETEKSI -->
             <!-- ===================================================== -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -529,7 +560,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Deteksi Terbaru"
+                    android:text="Riwayat Deteksi"
                     android:textColor="#2F6B2A"
                     android:textSize="18sp"
                     android:textStyle="bold" />
@@ -545,9 +576,7 @@
 
             </LinearLayout>
 
-            <!-- ===================================================== -->
-            <!-- RINGKASAN DETEKSI -->
-            <!-- ===================================================== -->
+
             <LinearLayout
                 android:id="@+id/cardDetectionSummary"
                 android:layout_width="match_parent"
@@ -558,10 +587,15 @@
                 android:orientation="horizontal"
                 android:padding="16dp">
 
+                <!-- TOTAL TERDETEKSI -->
                 <LinearLayout
+                    android:id="@+id/cardTotalDetected"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:gravity="center"
                     android:orientation="vertical">
 
@@ -590,10 +624,15 @@
                     android:layout_height="58dp"
                     android:background="#E3E6E1" />
 
+                <!-- HAMA TERDETEKSI -->
                 <LinearLayout
+                    android:id="@+id/cardPestDetected"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:gravity="center"
                     android:orientation="vertical">
 
@@ -622,10 +661,15 @@
                     android:layout_height="58dp"
                     android:background="#E3E6E1" />
 
+                <!-- PENYAKIT TERDETEKSI -->
                 <LinearLayout
+                    android:id="@+id/cardDiseaseDetected"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:gravity="center"
                     android:orientation="vertical">
 
@@ -651,6 +695,105 @@
 
             </LinearLayout>
 
+            <!-- ===================================================== -->
+            <!-- RIWAYAT PENANGANAN -->
+            <!-- ===================================================== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Riwayat Penanganan"
+                    android:textColor="#2F6B2A"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardHandlingSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card_white"
+                android:elevation="5dp"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:id="@+id/cardUnhandledHandling"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvUnhandledHandlingCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="#D92D20"
+                        android:textSize="26sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="Belum\nDitangani"
+                        android:textColor="#506F46"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="58dp"
+                    android:background="#E3E6E1" />
+
+                <LinearLayout
+                    android:id="@+id/cardHandledHandling"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvHandledHandlingCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="#0B7A2A"
+                        android:textSize="26sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="Sudah\nDitangani"
+                        android:textColor="#506F46"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -666,32 +809,13 @@
 
             </HorizontalScrollView>
 
-            <!-- ===================================================== -->
-            <!-- SELESAI DITANGANI -->
-            <!-- ===================================================== -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Selesai Ditangani"
-                    android:textColor="#2F6B2A"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-            </LinearLayout>
-
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:overScrollMode="never"
-                android:scrollbars="none">
+                android:scrollbars="none"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:id="@+id/handledAlertContainer"

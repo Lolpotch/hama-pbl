@@ -44,6 +44,12 @@
             android:name=".DetectionHistoryActivity"
             android:exported="false" />
         <activity
+            android:name=".TreatmentHistoryActivity"
+            android:exported="false" />
+        <activity
+            android:name=".SensorDetailActivity"
+            android:exported="false" />
+        <activity
             android:name=".DetectionDetailActivity"
             android:exported="false" />
         <activity

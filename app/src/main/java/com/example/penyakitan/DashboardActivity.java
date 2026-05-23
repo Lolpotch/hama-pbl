@@ -19,6 +19,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.app.AlertDialog;
+import com.google.firebase.auth.FirebaseAuth;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -47,11 +49,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class DashboardActivity extends AppCompatActivity {
 
     private TextView tvTemperature, tvHumidity;
+    private TextView tvLastUpdate;
     private TextView tvTemperatureStatus, tvHumidityStatus;
+    private LinearLayout cardTemperatureSensor, cardHumiditySensor;
 
     private TextView tvSeeAll;
     private TextView tvSeeAllDetection;
@@ -70,6 +76,7 @@ public class DashboardActivity extends AppCompatActivity {
 
     private ViewPager2 viewPagerLatestImages;
     private LatestImageAdapter latestImageAdapter;
+    private FrameLayout btnLogout;
 
     private final List<String> latestImageUrls = new ArrayList<>();
     private final List<String> latestImageLabels = new ArrayList<>();
@@ -93,24 +100,51 @@ public class DashboardActivity extends AppCompatActivity {
     private TextView tvTotalDetectedCount;
     private TextView tvPestDetectedCount;
     private TextView tvDiseaseDetectedCount;
+    private TextView tvUnhandledHandlingCount;
+    private TextView tvHandledHandlingCount;
+
 
     private ScrollView dashboardScrollView;
     private View cameraMenuOverlay;
     private LinearLayout floatingCameraMenu;
     private FrameLayout btnFloatCamera;
     private View btnFloatPest, btnFloatDisease;
+    private LinearLayout cardTotalDetected;
+    private LinearLayout cardPestDetected;
+    private LinearLayout cardDiseaseDetected;
+    private LinearLayout cardUnhandledHandling;
+    private LinearLayout cardHandledHandling;
 
     private boolean isFloatMenuOpen = false;
     private boolean isFloatingHiddenAtBottom = false;
+    private boolean showHandledHistory = false;
+    private boolean treatmentDiseaseLoaded = false;
+    private boolean treatmentPestLoaded = false;
+    private boolean latestDiseaseLoaded = false;
+    private boolean latestPestLoaded = false;
+    private long latestSensorUpdateMillis = -1L;
+    private long latestImageUpdateMillis = -1L;
 
     private View dotCarousel1, dotCarousel2, dotCarousel3, dotCarousel4;
     private final List<View> carouselDots = new ArrayList<>();
+    private final List<DetectionAlertItem> treatmentHistoryItems = new ArrayList<>();
+    private final List<DetectionAlertItem> latestDetectionItems = new ArrayList<>();
 
     private static final String PREF_NOTIF = "notification_pref";
     private static final String PREF_READ_KEYS = "read_notification_keys";
+    private static final String DATABASE_URL =
+            "https://lokasighthama-default-rtdb.asia-southeast1.firebasedatabase.app/";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
+
+    private final Runnable lastUpdateRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateLastUpdateText();
+            mainHandler.postDelayed(this, 1000);
+        }
+    };
 
     private final Runnable carouselRunnable = new Runnable() {
         @Override
@@ -145,6 +179,7 @@ public class DashboardActivity extends AppCompatActivity {
         loadLatestSensorData();
         loadCameraSourceCounts();
         loadDetectionSummary();
+        mainHandler.post(lastUpdateRunnable);
 
         mainHandler.postDelayed(() -> {
             loadTemperatureGraph();
@@ -153,16 +188,19 @@ public class DashboardActivity extends AppCompatActivity {
 
         mainHandler.postDelayed(() -> {
             loadLatestDiseaseDetections();
-            loadLatestHandledDetections();
+            loadTreatmentSummary();
         }, 900);
     }
 
     private void initView() {
         tvTemperature = findViewById(R.id.tvTemperature);
         tvHumidity = findViewById(R.id.tvHumidity);
+        tvLastUpdate = findViewById(R.id.tvLastUpdate);
 
         tvTemperatureStatus = findViewById(R.id.tvTemperatureStatus);
         tvHumidityStatus = findViewById(R.id.tvHumidityStatus);
+        cardTemperatureSensor = findViewById(R.id.cardTemperatureSensor);
+        cardHumiditySensor = findViewById(R.id.cardHumiditySensor);
 
         tvSeeAll = findViewById(R.id.tvSeeAll);
         tvSeeAllDetection = findViewById(R.id.tvSeeAllDetection);
@@ -170,6 +208,7 @@ public class DashboardActivity extends AppCompatActivity {
 
         btnNotification = findViewById(R.id.btnNotification);
         tvNotificationBadge = findViewById(R.id.tvNotificationBadge);
+        btnLogout = findViewById(R.id.btnLogout);
 
         btnOpenCamera = findViewById(R.id.btnOpenCamera);
         btnCaptureNow = findViewById(R.id.btnCaptureNow);
@@ -184,6 +223,14 @@ public class DashboardActivity extends AppCompatActivity {
         tvTotalDetectedCount = findViewById(R.id.tvTotalDetectedCount);
         tvPestDetectedCount = findViewById(R.id.tvPestDetectedCount);
         tvDiseaseDetectedCount = findViewById(R.id.tvDiseaseDetectedCount);
+        tvUnhandledHandlingCount = findViewById(R.id.tvUnhandledHandlingCount);
+        tvHandledHandlingCount = findViewById(R.id.tvHandledHandlingCount);
+
+        cardTotalDetected = findViewById(R.id.cardTotalDetected);
+        cardPestDetected = findViewById(R.id.cardPestDetected);
+        cardDiseaseDetected = findViewById(R.id.cardDiseaseDetected);
+        cardUnhandledHandling = findViewById(R.id.cardUnhandledHandling);
+        cardHandledHandling = findViewById(R.id.cardHandledHandling);
 
         cardSourceCctv = findViewById(R.id.cardSourceCctv);
         cardSourceMobile = findViewById(R.id.cardSourceMobile);
@@ -262,24 +309,24 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void initFirebase() {
-        sensorLatestRef = FirebaseDatabase.getInstance()
+        sensorLatestRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("sensor")
                 .child("dht22")
                 .child("latest");
 
-        sensorHistoryRef = FirebaseDatabase.getInstance()
+        sensorHistoryRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("sensor")
                 .child("dht22")
                 .child("history");
 
-        cameraCapturesRef = FirebaseDatabase.getInstance()
+        cameraCapturesRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("camera_captures");
 
-        diseaseResultRef = FirebaseDatabase.getInstance()
+        diseaseResultRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("inference_result")
                 .child("disease");
 
-        pestResultRef = FirebaseDatabase.getInstance()
+        pestResultRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("inference_result")
                 .child("pest");
     }
@@ -317,12 +364,24 @@ public class DashboardActivity extends AppCompatActivity {
 
         btnNotification.setOnClickListener(v -> showNotificationDialog());
 
+        if (cardTemperatureSensor != null) {
+            cardTemperatureSensor.setOnClickListener(v -> openSensorDetail("temperature"));
+        }
+
+        if (cardHumiditySensor != null) {
+            cardHumiditySensor.setOnClickListener(v -> openSensorDetail("humidity"));
+        }
+
         cardPlantLeft.setOnClickListener(v -> openHistoryByLabel("A"));
         cardPlantRight.setOnClickListener(v -> openHistoryByLabel("B"));
         cardPlantHp.setOnClickListener(v -> openHistoryByLabel("HP"));
 
         if (btnFloatCamera != null) {
             btnFloatCamera.setOnClickListener(v -> toggleFloatingCameraMenu());
+        }
+
+        if (btnLogout != null) {
+            btnLogout.setOnClickListener(v -> showLogoutDialog());
         }
 
         if (cameraMenuOverlay != null) {
@@ -341,6 +400,26 @@ public class DashboardActivity extends AppCompatActivity {
                 openCameraWithMode("disease");
                 closeFloatingCameraMenu();
             });
+        }
+
+        if (cardTotalDetected != null) {
+            cardTotalDetected.setOnClickListener(v -> openDetectionHistoryWithFilter("all"));
+        }
+
+        if (cardPestDetected != null) {
+            cardPestDetected.setOnClickListener(v -> openDetectionHistoryWithFilter("pest"));
+        }
+
+        if (cardDiseaseDetected != null) {
+            cardDiseaseDetected.setOnClickListener(v -> openDetectionHistoryWithFilter("disease"));
+        }
+
+        if (cardUnhandledHandling != null) {
+            cardUnhandledHandling.setOnClickListener(v -> openTreatmentHistory("unhandled"));
+        }
+
+        if (cardHandledHandling != null) {
+            cardHandledHandling.setOnClickListener(v -> openTreatmentHistory("handled"));
         }
 
         setupFloatingButtonScrollBehavior();
@@ -435,6 +514,62 @@ public class DashboardActivity extends AppCompatActivity {
                     .setDuration(180)
                     .start();
         }
+    }
+
+    private void showLogoutDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(R.layout.dialog_logout);
+        dialog.setCancelable(true);
+
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+
+        TextView btnCancelLogout = dialog.findViewById(R.id.btnCancelLogout);
+        TextView btnConfirmLogout = dialog.findViewById(R.id.btnConfirmLogout);
+
+        btnCancelLogout.setOnClickListener(v -> dialog.dismiss());
+
+        btnConfirmLogout.setOnClickListener(v -> {
+            FirebaseAuth.getInstance().signOut();
+
+            Intent intent = new Intent(DashboardActivity.this, LoginActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+            finish();
+
+            dialog.dismiss();
+        });
+
+        dialog.show();
+
+        Window shownWindow = dialog.getWindow();
+        if (shownWindow != null) {
+            shownWindow.setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.88),
+                    WindowManager.LayoutParams.WRAP_CONTENT
+            );
+        }
+    }
+
+    private void openDetectionHistoryWithFilter(String modeFilter) {
+        Intent intent = new Intent(DashboardActivity.this, DetectionHistoryActivity.class);
+        intent.putExtra("mode_filter", modeFilter);
+        startActivity(intent);
+    }
+
+    private void openSensorDetail(String sensorType) {
+        Intent intent = new Intent(DashboardActivity.this, SensorDetailActivity.class);
+        intent.putExtra("sensor_type", sensorType);
+        startActivity(intent);
+    }
+
+    private void openTreatmentHistory(String handlingFilter) {
+        Intent intent = new Intent(DashboardActivity.this, TreatmentHistoryActivity.class);
+        intent.putExtra("handling_filter", handlingFilter);
+        startActivity(intent);
     }
 
     private void openCameraWithMode(String mode) {
@@ -621,7 +756,7 @@ public class DashboardActivity extends AppCompatActivity {
         btnCloseNotification.setOnClickListener(v -> dialog.dismiss());
         notificationListContainer.removeAllViews();
 
-        diseaseResultRef.orderByChild("timestamp")
+        diseaseResultRef.orderByChild("time/timestamp")
                 .addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
@@ -726,9 +861,9 @@ public class DashboardActivity extends AppCompatActivity {
                 continue;
             }
 
-            String className = getSafeString(data.child("class_name"));
-            String source = getSafeString(data.child("source"));
-            String timestamp = getSafeString(data.child("timestamp"));
+            String className = getDetectionClassNameForCount(data, "disease");
+            String source = getDetectionSource(data);
+            String timestamp = getDetectionTimestamp(data);
             Double confidenceValue = data.child("confidence").getValue(Double.class);
 
             if (detectionKey == null || detectionKey.trim().isEmpty()) {
@@ -954,15 +1089,21 @@ public class DashboardActivity extends AppCompatActivity {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 List<LatestPhoto> allPhotos = new ArrayList<>();
+                long latestUploadedAt = -1L;
 
                 for (DataSnapshot data : snapshot.getChildren()) {
                     String imageUrl = getSafeString(data.child("image"));
                     String label = getSafeString(data.child("label"));
                     String filename = getSafeString(data.child("filename"));
                     String time = getSafeString(data.child("time"));
+                    long uploadedAt = getMillisFromSnapshot(data, "uploaded_at", "timestamp", "time");
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
+                    }
+
+                    if (uploadedAt > latestUploadedAt) {
+                        latestUploadedAt = uploadedAt;
                     }
 
                     if (label == null || label.trim().isEmpty()) {
@@ -986,6 +1127,8 @@ public class DashboardActivity extends AppCompatActivity {
                 }
 
                 Collections.reverse(allPhotos);
+                latestImageUpdateMillis = latestUploadedAt;
+                updateLastUpdateText();
 
                 List<LatestPhoto> selectedPhotos = new ArrayList<>();
 
@@ -1086,6 +1229,21 @@ public class DashboardActivity extends AppCompatActivity {
                 || label.contains("hp")
                 || filename.contains("mobile")
                 || filename.contains("hp");
+    }
+
+    private boolean isMobileCameraSource(String label, String source, String filename) {
+        String labelLower = label == null ? "" : label.toLowerCase(Locale.US);
+        String sourceLower = source == null ? "" : source.toLowerCase(Locale.US);
+        String filenameLower = filename == null ? "" : filename.toLowerCase(Locale.US);
+
+        return labelLower.contains("mobile")
+                || labelLower.contains("hp")
+                || sourceLower.contains("mobile")
+                || sourceLower.contains("hp")
+                || filenameLower.contains("mobile")
+                || filenameLower.contains("hp_")
+                || filenameLower.contains("_hp")
+                || filenameLower.startsWith("hp");
     }
 
     private boolean isFrontPhoto(String label, String filename) {
@@ -1206,20 +1364,14 @@ public class DashboardActivity extends AppCompatActivity {
                 for (DataSnapshot data : snapshot.getChildren()) {
                     String label = getSafeString(data.child("label"));
                     String source = getSafeString(data.child("source"));
+                    String filename = getSafeString(data.child("filename"));
                     String imageUrl = getSafeString(data.child("image"));
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
                     }
 
-                    String labelLower = label == null ? "" : label.toLowerCase(Locale.US);
-                    String sourceLower = source == null ? "" : source.toLowerCase(Locale.US);
-
-                    boolean isMobile =
-                            labelLower.contains("hp")
-                                    || labelLower.contains("mobile")
-                                    || sourceLower.contains("hp")
-                                    || sourceLower.contains("mobile");
+                    boolean isMobile = isMobileCameraSource(label, source, filename);
 
                     if (isMobile) {
                         mobileCount++;
@@ -1280,151 +1432,191 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadLatestDiseaseDetections() {
-        Query query = diseaseResultRef
-                .orderByChild("timestamp")
+        latestDetectionItems.clear();
+        latestDiseaseLoaded = false;
+        latestPestLoaded = false;
+
+        loadLatestDetectionsByMode(diseaseResultRef, "disease");
+        loadLatestDetectionsByMode(pestResultRef, "pest");
+    }
+
+    private void loadLatestDetectionsByMode(DatabaseReference reference, String mode) {
+        Query query = reference
+                .orderByChild("time/timestamp")
                 .limitToLast(100);
 
         query.addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
-                alertContainer.removeAllViews();
-                alertList.clear();
-
-                List<DetectionAlertItem> tempAlerts = new ArrayList<>();
+                removeLatestDetectionItemsByMode(mode);
 
                 for (DataSnapshot data : snapshot.getChildren()) {
-                    String detectionKey = data.getKey();
+                    DetectionAlertItem item = createLatestDetectionItem(data, mode);
 
-                    Boolean handled = data.child("handled").getValue(Boolean.class);
-                    String status = getSafeString(data.child("status"));
-
-                    boolean isHandled = false;
-
-                    if (handled != null && handled) {
-                        isHandled = true;
+                    if (item != null) {
+                        latestDetectionItems.add(item);
                     }
-
-                    if (status != null && status.equalsIgnoreCase("handled")) {
-                        isHandled = true;
-                    }
-
-                    if (isHandled) {
-                        continue;
-                    }
-
-                    String className = getSafeString(data.child("class_name"));
-                    String imageUrl = getSafeString(data.child("image_url"));
-                    String mode = getSafeString(data.child("mode"));
-                    String recommendation = getSafeString(data.child("recommendation"));
-                    String source = getSafeString(data.child("source"));
-                    String timestamp = getSafeString(data.child("timestamp"));
-
-                    Double confidenceValue = data.child("confidence").getValue(Double.class);
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = getSafeString(
-                                data.child("recommendation_detail").child("summary")
-                        );
-                    }
-
-                    if (className == null || className.trim().isEmpty()) {
-                        className = "Tidak Diketahui";
-                    }
-
-                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                        imageUrl = "placeholder";
-                    }
-
-                    if (mode == null || mode.trim().isEmpty()) {
-                        mode = "disease";
-                    }
-
-                    if (source == null || source.trim().isEmpty()) {
-                        source = "kamera";
-                    }
-
-                    if (timestamp == null || timestamp.trim().isEmpty()) {
-                        timestamp = "-";
-                    }
-
-                    if (recommendation == null || recommendation.trim().isEmpty()) {
-                        recommendation = "Belum ada rekomendasi penanganan.";
-                    }
-
-                    double confidencePercent = 0;
-
-                    if (confidenceValue != null) {
-                        confidencePercent = confidenceValue * 100;
-                    }
-
-                    String displayName = formatClassName(className);
-
-                    String description =
-                            "Mode: " + mode +
-                                    "\nSource: " + source +
-                                    "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
-
-                    AlertPanel alert = new AlertPanel(
-                            source,
-                            displayName,
-                            imageUrl,
-                            timestamp,
-                            description,
-                            recommendation
-                    );
-
-                    tempAlerts.add(new DetectionAlertItem(detectionKey, alert));
                 }
 
-                Collections.reverse(tempAlerts);
-
-                int shownCount = 0;
-
-                for (DetectionAlertItem item : tempAlerts) {
-                    if (shownCount >= 5) {
-                        break;
-                    }
-
-                    alertList.add(item.alert);
-                    addAlertPanel(item.alert, item.detectionKey);
-                    shownCount++;
-                }
-
-                if (shownCount == 0) {
-                    AlertPanel emptyAlert = new AlertPanel(
-                            "Sistem",
-                            "Tidak Ada Deteksi Aktif",
-                            "placeholder",
-                            "-",
-                            "Semua deteksi sudah ditangani.",
-                            "Tidak ada alert baru yang perlu ditampilkan."
-                    );
-
-                    addAlertPanel(emptyAlert, null);
-                }
+                setLatestModeLoaded(mode);
+                renderLatestDetections();
             }
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                alertContainer.removeAllViews();
-
-                AlertPanel errorAlert = new AlertPanel(
-                        "Firebase",
-                        "Gagal Memuat Deteksi",
-                        "placeholder",
-                        "-",
-                        "Data deteksi gagal diambil dari Firebase.",
-                        error.getMessage()
-                );
-
-                addAlertPanel(errorAlert, null);
+                setLatestModeLoaded(mode);
+                renderLatestDetections();
             }
         });
     }
 
+    private DetectionAlertItem createLatestDetectionItem(DataSnapshot data, String defaultMode) {
+        String detectionKey = data.getKey();
+
+        if (detectionKey == null || detectionKey.trim().isEmpty()
+                || detectionKey.equalsIgnoreCase("latest")) {
+            return null;
+        }
+
+        if (isDetectionHandled(data)) {
+            return null;
+        }
+
+        String className = getDetectionClassNameForCount(data, defaultMode);
+        String imageUrl = getDetectionImageUrl(data);
+        String mode = getSafeString(data.child("mode"));
+        String recommendation = getSafeString(data.child("recommendation"));
+        String source = getDetectionSource(data);
+        String timestamp = getDetectionTimestamp(data);
+        Double confidenceValue = getDetectionConfidenceForMode(data, defaultMode);
+
+        if (className == null || className.trim().isEmpty()
+                || className.equalsIgnoreCase("healthy")
+                || className.equalsIgnoreCase("unknown")) {
+            return null;
+        }
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = "placeholder";
+        }
+
+        if (mode == null || mode.trim().isEmpty()) {
+            mode = defaultMode;
+        }
+
+        if (source == null || source.trim().isEmpty()) {
+            source = "kamera";
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = "-";
+        }
+
+        if (recommendation == null || recommendation.trim().isEmpty()) {
+            recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
+        }
+
+        if (recommendation == null || recommendation.trim().isEmpty()) {
+            recommendation = "Belum ada rekomendasi penanganan.";
+        }
+
+        double confidencePercent = 0;
+
+        if (confidenceValue != null) {
+            confidencePercent = confidenceValue * 100;
+        }
+
+        String description =
+                "Mode: " + mode +
+                        "\nSource: " + source +
+                        "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
+
+        AlertPanel alert = new AlertPanel(
+                source,
+                formatClassName(className),
+                imageUrl,
+                timestamp,
+                description,
+                recommendation
+        );
+
+        return new DetectionAlertItem(
+                detectionKey,
+                alert,
+                defaultMode,
+                false,
+                timestamp,
+                getMillisFromValue(timestamp)
+        );
+    }
+
+    private void renderLatestDetections() {
+        if (!latestDiseaseLoaded || !latestPestLoaded || alertContainer == null) {
+            return;
+        }
+
+        alertContainer.removeAllViews();
+        alertList.clear();
+
+        latestDetectionItems.sort((left, right) -> {
+            int millisCompare = Long.compare(right.timestampMillis, left.timestampMillis);
+
+            if (millisCompare != 0) {
+                return millisCompare;
+            }
+
+            String leftTime = left.timestamp == null ? "" : left.timestamp;
+            String rightTime = right.timestamp == null ? "" : right.timestamp;
+            return rightTime.compareTo(leftTime);
+        });
+
+        int shownCount = 0;
+
+        for (DetectionAlertItem item : latestDetectionItems) {
+            if (shownCount >= 5) {
+                break;
+            }
+
+            alertList.add(item.alert);
+            addAlertPanel(item.alert, item.detectionKey, item.mode);
+            shownCount++;
+        }
+
+        if (shownCount == 0) {
+            AlertPanel emptyAlert = new AlertPanel(
+                    "Sistem",
+                    "Tidak Ada Deteksi Aktif",
+                    "placeholder",
+                    "-",
+                    "Semua deteksi sudah ditangani.",
+                    "Tidak ada alert baru yang perlu ditampilkan."
+            );
+
+            addAlertPanel(emptyAlert, null, "disease");
+        }
+    }
+
+    private void removeLatestDetectionItemsByMode(String mode) {
+        for (int i = latestDetectionItems.size() - 1; i >= 0; i--) {
+            DetectionAlertItem item = latestDetectionItems.get(i);
+
+            if (item.mode != null && item.mode.equalsIgnoreCase(mode)) {
+                latestDetectionItems.remove(i);
+            }
+        }
+    }
+
+    private void setLatestModeLoaded(String mode) {
+        if (mode != null && mode.equalsIgnoreCase("pest")) {
+            latestPestLoaded = true;
+        } else {
+            latestDiseaseLoaded = true;
+        }
+    }
+
     private void loadLatestHandledDetections() {
         Query query = diseaseResultRef
-                .orderByChild("timestamp")
+                .orderByChild("time/timestamp")
                 .limitToLast(100);
 
         query.addValueEventListener(new ValueEventListener() {
@@ -1454,13 +1646,13 @@ public class DashboardActivity extends AppCompatActivity {
                         continue;
                     }
 
-                    String className = getSafeString(data.child("class_name"));
-                    String imageUrl = getSafeString(data.child("image_url"));
+                    String className = getDetectionClassNameForCount(data, "disease");
+                    String imageUrl = getDetectionImageUrl(data);
                     String mode = getSafeString(data.child("mode"));
                     String recommendation = getSafeString(data.child("recommendation"));
-                    String source = getSafeString(data.child("source"));
-                    String timestamp = getSafeString(data.child("timestamp"));
-                    String handledAt = getSafeString(data.child("handled_at"));
+                    String source = getDetectionSource(data);
+                    String timestamp = getDetectionTimestamp(data);
+                    String handledAt = getDetectionHandledAt(data);
 
                     Double confidenceValue = data.child("confidence").getValue(Double.class);
 
@@ -1598,6 +1790,380 @@ public class DashboardActivity extends AppCompatActivity {
         addHandledAlertPanel(emptyAlert);
     }
 
+    private void loadTreatmentSummary() {
+        diseaseResultRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
+                pestResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
+                    @Override
+                    public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
+                        updateTreatmentSummaryCounts(diseaseSnapshot, pestSnapshot);
+                    }
+
+                    @Override
+                    public void onCancelled(@NonNull DatabaseError error) {
+                        updateTreatmentSummaryCounts(diseaseSnapshot, null);
+                    }
+                });
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                tvUnhandledHandlingCount.setText("0");
+                tvHandledHandlingCount.setText("0");
+            }
+        });
+
+        pestResultRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
+                diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
+                    @Override
+                    public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
+                        updateTreatmentSummaryCounts(diseaseSnapshot, pestSnapshot);
+                    }
+
+                    @Override
+                    public void onCancelled(@NonNull DatabaseError error) {
+                        updateTreatmentSummaryCounts(null, pestSnapshot);
+                    }
+                });
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                tvUnhandledHandlingCount.setText("0");
+                tvHandledHandlingCount.setText("0");
+            }
+        });
+    }
+
+    private void updateTreatmentSummaryCounts(
+            DataSnapshot diseaseSnapshot,
+            DataSnapshot pestSnapshot
+    ) {
+        int unhandledCount = 0;
+        int handledCount = 0;
+
+        if (diseaseSnapshot != null) {
+            int[] diseaseCounts = countTreatmentStatus(diseaseSnapshot, "disease");
+            unhandledCount += diseaseCounts[0];
+            handledCount += diseaseCounts[1];
+        }
+
+        if (pestSnapshot != null) {
+            int[] pestCounts = countTreatmentStatus(pestSnapshot, "pest");
+            unhandledCount += pestCounts[0];
+            handledCount += pestCounts[1];
+        }
+
+        tvUnhandledHandlingCount.setText(String.valueOf(unhandledCount));
+        tvHandledHandlingCount.setText(String.valueOf(handledCount));
+    }
+
+    private int[] countTreatmentStatus(DataSnapshot snapshot, String mode) {
+        int unhandledCount = 0;
+        int handledCount = 0;
+
+        for (DataSnapshot data : snapshot.getChildren()) {
+            String key = data.getKey();
+
+            if (key != null && key.equalsIgnoreCase("latest")) {
+                continue;
+            }
+
+            String className = getDetectionClassNameForCount(data, mode);
+            String imageUrl = getDetectionImageUrl(data);
+
+            if (className == null || className.trim().isEmpty()
+                    || className.equalsIgnoreCase("healthy")
+                    || className.equalsIgnoreCase("unknown")) {
+                continue;
+            }
+
+            if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                continue;
+            }
+
+            boolean handled = isDetectionHandled(data);
+
+            if (handled) {
+                handledCount++;
+            } else {
+                unhandledCount++;
+            }
+        }
+
+        return new int[]{unhandledCount, handledCount};
+    }
+
+    private void loadTreatmentHistory() {
+        treatmentHistoryItems.clear();
+        treatmentDiseaseLoaded = false;
+        treatmentPestLoaded = false;
+
+        loadTreatmentHistoryByMode(diseaseResultRef, "disease");
+        loadTreatmentHistoryByMode(pestResultRef, "pest");
+    }
+
+    private void loadTreatmentHistoryByMode(DatabaseReference reference, String mode) {
+        Query query = reference
+                .orderByChild("time/timestamp")
+                .limitToLast(100);
+
+        query.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                removeTreatmentItemsByMode(mode);
+
+                for (DataSnapshot data : snapshot.getChildren()) {
+                    DetectionAlertItem item = createTreatmentHistoryItem(data, mode);
+
+                    if (item != null) {
+                        treatmentHistoryItems.add(item);
+                    }
+                }
+
+                setTreatmentModeLoaded(mode);
+                renderTreatmentHistory();
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                setTreatmentModeLoaded(mode);
+                renderTreatmentHistory();
+            }
+        });
+    }
+
+    private DetectionAlertItem createTreatmentHistoryItem(DataSnapshot data, String defaultMode) {
+        String detectionKey = data.getKey();
+
+        if (detectionKey == null || detectionKey.trim().isEmpty()
+                || detectionKey.equalsIgnoreCase("latest")) {
+            return null;
+        }
+
+        String className = getDetectionClassNameForCount(data, defaultMode);
+
+        if (className == null || className.trim().isEmpty()
+                || className.equalsIgnoreCase("healthy")
+                || className.equalsIgnoreCase("unknown")) {
+            return null;
+        }
+
+        boolean handled = isDetectionHandled(data);
+
+        String imageUrl = getDetectionImageUrl(data);
+        String mode = getSafeString(data.child("mode"));
+        String recommendation = getSafeString(data.child("recommendation"));
+        String source = getDetectionSource(data);
+        String timestamp = getDetectionTimestamp(data);
+        String handledAt = getDetectionHandledAt(data);
+        Double confidenceValue = getDetectionConfidenceForMode(data, defaultMode);
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = "placeholder";
+        }
+
+        if (mode == null || mode.trim().isEmpty()) {
+            mode = defaultMode;
+        }
+
+        if (source == null || source.trim().isEmpty()) {
+            source = "kamera";
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = "-";
+        }
+
+        if (recommendation == null || recommendation.trim().isEmpty()) {
+            recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
+        }
+
+        if (recommendation == null || recommendation.trim().isEmpty()) {
+            recommendation = handled
+                    ? "Deteksi sudah ditandai selesai."
+                    : "Belum ada rekomendasi penanganan.";
+        }
+
+        double confidencePercent = 0;
+
+        if (confidenceValue != null) {
+            confidencePercent = confidenceValue * 100;
+        }
+
+        String description = "Status: " + (handled ? "Selesai Ditangani" : "Belum Ditangani") +
+                "\nMode: " + mode +
+                "\nSource: " + source +
+                "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent);
+
+        if (handled && handledAt != null && !handledAt.trim().isEmpty()) {
+            description += "\nDitangani: " + handledAt;
+        }
+
+        AlertPanel alert = new AlertPanel(
+                source,
+                formatClassName(className),
+                imageUrl,
+                timestamp,
+                description,
+                recommendation
+        );
+
+        return new DetectionAlertItem(
+                detectionKey,
+                alert,
+                defaultMode,
+                handled,
+                timestamp,
+                getMillisFromValue(timestamp)
+        );
+    }
+
+    private void renderTreatmentHistory() {
+        if (!treatmentDiseaseLoaded || !treatmentPestLoaded || handledAlertContainer == null) {
+            return;
+        }
+
+        handledAlertContainer.removeAllViews();
+
+        int unhandledCount = 0;
+        int handledCount = 0;
+        List<DetectionAlertItem> visibleItems = new ArrayList<>();
+
+        for (DetectionAlertItem item : treatmentHistoryItems) {
+            if (item.handled) {
+                handledCount++;
+            } else {
+                unhandledCount++;
+            }
+
+            if (item.handled == showHandledHistory) {
+                visibleItems.add(item);
+            }
+        }
+
+        tvUnhandledHandlingCount.setText(String.valueOf(unhandledCount));
+        tvHandledHandlingCount.setText(String.valueOf(handledCount));
+
+        visibleItems.sort((left, right) -> {
+            String leftTime = left.timestamp == null ? "" : left.timestamp;
+            String rightTime = right.timestamp == null ? "" : right.timestamp;
+            return rightTime.compareTo(leftTime);
+        });
+
+        int shownCount = 0;
+
+        for (DetectionAlertItem item : visibleItems) {
+            if (shownCount >= 5) {
+                break;
+            }
+
+            if (showHandledHistory) {
+                addTreatmentAlertPanel(item, false);
+            } else {
+                addTreatmentAlertPanel(item, true);
+            }
+
+            shownCount++;
+        }
+
+        if (shownCount == 0) {
+            addEmptyTreatmentCard();
+        }
+    }
+
+    private void addTreatmentAlertPanel(DetectionAlertItem item, boolean showSolveButton) {
+        AlertView view = new AlertView(DashboardActivity.this);
+
+        view.setData(
+                item.alert.imageUrl,
+                item.alert.date,
+                item.alert.diseaseName,
+                item.alert.description,
+                item.alert.solution
+        );
+
+        view.setHandledStatus(item.handled);
+        view.setSolveButtonVisible(showSolveButton);
+
+        if (showSolveButton) {
+            view.setOnSolveClick(() -> markDetectionAsHandled(item.detectionKey, item.mode));
+        }
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dpToPx(280),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+
+        params.setMargins(0, 0, dpToPx(12), 0);
+
+        view.setLayoutParams(params);
+        handledAlertContainer.addView(view);
+    }
+
+    private void addEmptyTreatmentCard() {
+        String title = showHandledHistory
+                ? "Belum Ada Deteksi Selesai"
+                : "Tidak Ada Deteksi Aktif";
+        String description = showHandledHistory
+                ? "Belum ada deteksi yang ditandai selesai."
+                : "Semua deteksi sudah ditangani.";
+        String solution = showHandledHistory
+                ? "Tekan kartu Belum Ditangani lalu Tandai Selesai untuk memindahkan data ke sini."
+                : "Tidak ada alert baru yang perlu ditampilkan.";
+
+        AlertPanel emptyAlert = new AlertPanel(
+                "Sistem",
+                title,
+                "placeholder",
+                "-",
+                description,
+                solution
+        );
+
+        AlertView view = new AlertView(DashboardActivity.this);
+
+        view.setData(
+                emptyAlert.imageUrl,
+                emptyAlert.date,
+                emptyAlert.diseaseName,
+                emptyAlert.description,
+                emptyAlert.solution
+        );
+
+        view.setSolveButtonVisible(false);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dpToPx(280),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+
+        params.setMargins(0, 0, dpToPx(12), 0);
+        view.setLayoutParams(params);
+        handledAlertContainer.addView(view);
+    }
+
+    private void removeTreatmentItemsByMode(String mode) {
+        for (int i = treatmentHistoryItems.size() - 1; i >= 0; i--) {
+            DetectionAlertItem item = treatmentHistoryItems.get(i);
+
+            if (item.mode != null && item.mode.equalsIgnoreCase(mode)) {
+                treatmentHistoryItems.remove(i);
+            }
+        }
+    }
+
+    private void setTreatmentModeLoaded(String mode) {
+        if (mode != null && mode.equalsIgnoreCase("pest")) {
+            treatmentPestLoaded = true;
+        } else {
+            treatmentDiseaseLoaded = true;
+        }
+    }
+
     private String formatClassName(String className) {
         if (className == null || className.trim().isEmpty()) {
             return "Tidak Diketahui";
@@ -1641,14 +2207,39 @@ public class DashboardActivity extends AppCompatActivity {
         if (value instanceof Map) {
             Map<?, ?> map = (Map<?, ?>) value;
 
-            Object summary = map.get("summary");
-            if (summary != null) {
-                return String.valueOf(summary);
-            }
+            String[] keys = {
+                    "summary",
+                    "class_name",
+                    "predicted_class",
+                    "detected_class",
+                    "label",
+                    "prediction",
+                    "value",
+                    "annotated_image_url",
+                    "url",
+                    "image_url",
+                    "input_image_url",
+                    "image",
+                    "path",
+                    "public_url",
+                    "source",
+                    "type",
+                    "name",
+                    "status",
+                    "sync_status",
+                    "timestamp_iso",
+                    "created_at_iso",
+                    "timestamp",
+                    "created_at",
+                    "time"
+            };
 
-            Object detectedClass = map.get("detected_class");
-            if (detectedClass != null) {
-                return String.valueOf(detectedClass);
+            for (String key : keys) {
+                Object mappedValue = map.get(key);
+
+                if (mappedValue != null) {
+                    return String.valueOf(mappedValue);
+                }
             }
 
             return "";
@@ -1657,12 +2248,289 @@ public class DashboardActivity extends AppCompatActivity {
         return String.valueOf(value);
     }
 
+    private String getDetectionSource(DataSnapshot data) {
+        String source = getSafeString(data.child("source"));
+
+        if (source == null || source.trim().isEmpty()) {
+            source = getSafeString(data.child("source_info"));
+        }
+
+        return source;
+    }
+
+    private String getDetectionTimestamp(DataSnapshot data) {
+        String timestamp = getSafeString(data.child("timestamp"));
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("timestamp_iso"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("timestamp"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("created_at_iso"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("created_at"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("created_at"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("uploaded_at"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("captured_at"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getTimestampFromImageFields(data);
+        }
+
+        return timestamp;
+    }
+
+    private String getTimestampFromImageFields(DataSnapshot data) {
+        String[] imageValues = {
+                getSafeString(data.child("input_image_url")),
+                getSafeString(data.child("image").child("input_image_url")),
+                getSafeString(data.child("image").child("image_url")),
+                getSafeString(data.child("image_url")),
+                getSafeString(data.child("image"))
+        };
+
+        for (String imageValue : imageValues) {
+            String timestamp = extractCompactTimestamp(imageValue);
+
+            if (timestamp != null && !timestamp.trim().isEmpty()) {
+                return timestamp;
+            }
+        }
+
+        return "";
+    }
+
+    private String extractCompactTimestamp(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "";
+        }
+
+        Matcher matcher = Pattern.compile("(\\d{8}_\\d{6})").matcher(value);
+
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+
+        return "";
+    }
+
+    private String getDetectionHandledAt(DataSnapshot data) {
+        String handledAt = getSafeString(data.child("status").child("handled_at"));
+
+        if (handledAt == null || handledAt.trim().isEmpty()) {
+            handledAt = getSafeString(data.child("handled_at"));
+        }
+
+        return handledAt;
+    }
+
+    private boolean isDetectionHandled(DataSnapshot data) {
+        Boolean handledValue = data.child("handled").getValue(Boolean.class);
+
+        if (handledValue != null && handledValue) {
+            return true;
+        }
+
+        Boolean nestedHandledValue = data.child("status").child("handled").getValue(Boolean.class);
+
+        if (nestedHandledValue != null && nestedHandledValue) {
+            return true;
+        }
+
+        String status = getSafeString(data.child("status"));
+
+        return status != null && status.equalsIgnoreCase("handled");
+    }
+
+    private void updateLastUpdateText() {
+        if (tvLastUpdate == null) {
+            return;
+        }
+
+        long latestUpdateMillis = Math.max(latestSensorUpdateMillis, latestImageUpdateMillis);
+
+        if (latestUpdateMillis <= 0) {
+            tvLastUpdate.setText("Terakhir diupdate -");
+            return;
+        }
+
+        tvLastUpdate.setText("Terakhir diupdate " + formatRelativeTime(latestUpdateMillis));
+    }
+
+    private String formatRelativeTime(long timestampMillis) {
+        long diffMillis = System.currentTimeMillis() - timestampMillis;
+
+        if (diffMillis < 0) {
+            diffMillis = 0;
+        }
+
+        long seconds = diffMillis / 1000;
+
+        if (seconds < 5) {
+            return "baru saja";
+        }
+
+        if (seconds < 60) {
+            return seconds + " detik yang lalu";
+        }
+
+        long minutes = seconds / 60;
+
+        if (minutes < 60) {
+            return minutes + " menit yang lalu";
+        }
+
+        long hours = minutes / 60;
+
+        if (hours < 24) {
+            return hours + " jam yang lalu";
+        }
+
+        long days = hours / 24;
+
+        if (days < 7) {
+            return days + " hari yang lalu";
+        }
+
+        SimpleDateFormat sdf = new SimpleDateFormat("dd MMM yyyy, HH:mm", new Locale("id", "ID"));
+        return sdf.format(new Date(timestampMillis));
+    }
+
+    private long getMillisFromSnapshot(DataSnapshot data, String... keys) {
+        for (String key : keys) {
+            long millis = getMillisFromValue(data.child(key).getValue());
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        return -1L;
+    }
+
+    private long getMillisFromValue(Object value) {
+        if (value == null) {
+            return -1L;
+        }
+
+        if (value instanceof Number) {
+            long rawValue = ((Number) value).longValue();
+
+            if (rawValue <= 0) {
+                return -1L;
+            }
+
+            if (rawValue < 100000000000L) {
+                return rawValue * 1000L;
+            }
+
+            return rawValue;
+        }
+
+        String text = String.valueOf(value).trim();
+
+        if (text.isEmpty() || text.equals("-")) {
+            return -1L;
+        }
+
+        try {
+            long rawValue = Long.parseLong(text);
+
+            if (rawValue < 100000000000L) {
+                return rawValue * 1000L;
+            }
+
+            return rawValue;
+        } catch (Exception ignored) {
+        }
+
+        String[] utcPatterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyyMMdd_HHmmss"
+        };
+
+        if (text.matches(".*\\.\\d{4,}([+-]\\d{2}:\\d{2}|Z)$")) {
+            text = text.replaceFirst("\\.(\\d{3})\\d+([+-]\\d{2}:\\d{2}|Z)$", ".$1$2");
+        }
+
+        for (String pattern : utcPatterns) {
+            long millis = parseDateMillis(text, pattern, TimeZone.getTimeZone("UTC"));
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        String[] localPatterns = {
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd HH:mm",
+                "dd-MM-yyyy HH:mm:ss",
+                "dd-MM-yyyy HH:mm",
+                "dd/MM/yyyy HH:mm:ss",
+                "dd/MM/yyyy HH:mm"
+        };
+
+        for (String pattern : localPatterns) {
+            long millis = parseDateMillis(text, pattern, TimeZone.getDefault());
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        return -1L;
+    }
+
+    private long parseDateMillis(String text, String pattern, TimeZone timeZone) {
+        try {
+            SimpleDateFormat sdf = new SimpleDateFormat(pattern, Locale.US);
+            sdf.setLenient(false);
+            sdf.setTimeZone(timeZone);
+
+            Date date = sdf.parse(text);
+
+            if (date != null) {
+                return date.getTime();
+            }
+        } catch (Exception ignored) {
+        }
+
+        return -1L;
+    }
+
     private void loadLatestSensorData() {
         sensorLatestRef.addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 Double suhu = snapshot.child("temperature").getValue(Double.class);
                 Double humidity = snapshot.child("humidity").getValue(Double.class);
+                latestSensorUpdateMillis = getMillisFromSnapshot(
+                        snapshot,
+                        "updated_at",
+                        "timestamp",
+                        "time",
+                        "created_at"
+                );
+                updateLastUpdateText();
 
                 if (suhu != null) {
                     tvTemperature.setText(formatNumber(suhu) + "°C");
@@ -1698,8 +2566,8 @@ public class DashboardActivity extends AppCompatActivity {
                 pestResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
-                        int diseaseCount = countActiveDetections(diseaseSnapshot);
-                        int pestCount = countActiveDetections(pestSnapshot);
+                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
+                        int pestCount = countActiveDetections(pestSnapshot, "pest");
                         int totalCount = diseaseCount + pestCount;
 
                         tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
@@ -1709,7 +2577,11 @@ public class DashboardActivity extends AppCompatActivity {
 
                     @Override
                     public void onCancelled(@NonNull DatabaseError error) {
-                        updateDetectionSummaryOnlyDisease(diseaseSnapshot);
+                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
+
+                        tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
+                        tvPestDetectedCount.setText("0");
+                        tvTotalDetectedCount.setText(String.valueOf(diseaseCount));
                     }
                 });
             }
@@ -1728,8 +2600,8 @@ public class DashboardActivity extends AppCompatActivity {
                 diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                        int diseaseCount = countActiveDetections(diseaseSnapshot);
-                        int pestCount = countActiveDetections(pestSnapshot);
+                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
+                        int pestCount = countActiveDetections(pestSnapshot, "pest");
                         int totalCount = diseaseCount + pestCount;
 
                         tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
@@ -1739,7 +2611,7 @@ public class DashboardActivity extends AppCompatActivity {
 
                     @Override
                     public void onCancelled(@NonNull DatabaseError error) {
-                        int pestCount = countActiveDetections(pestSnapshot);
+                        int pestCount = countActiveDetections(pestSnapshot, "pest");
 
                         tvDiseaseDetectedCount.setText("0");
                         tvPestDetectedCount.setText(String.valueOf(pestCount));
@@ -1755,7 +2627,7 @@ public class DashboardActivity extends AppCompatActivity {
         });
     }
 
-    private int countActiveDetections(DataSnapshot snapshot) {
+    private int countActiveDetections(DataSnapshot snapshot, String mode) {
         int count = 0;
 
         for (DataSnapshot data : snapshot.getChildren()) {
@@ -1765,24 +2637,8 @@ public class DashboardActivity extends AppCompatActivity {
                 continue;
             }
 
-            Boolean handled = data.child("handled").getValue(Boolean.class);
-            String status = getSafeString(data.child("status"));
-            String className = getSafeString(data.child("class_name"));
-            String imageUrl = getSafeString(data.child("image_url"));
-
-            boolean isHandled = false;
-
-            if (handled != null && handled) {
-                isHandled = true;
-            }
-
-            if (status != null && status.equalsIgnoreCase("handled")) {
-                isHandled = true;
-            }
-
-            if (isHandled) {
-                continue;
-            }
+            String className = getDetectionClassNameForCount(data, mode);
+            String imageUrl = getDetectionImageUrl(data);
 
             if (className == null || className.trim().isEmpty()) {
                 continue;
@@ -1807,7 +2663,7 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void updateDetectionSummaryOnlyDisease(DataSnapshot diseaseSnapshot) {
-        int diseaseCount = countActiveDetections(diseaseSnapshot);
+        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
 
         tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
         tvPestDetectedCount.setText("0");
@@ -1955,6 +2811,10 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void addAlertPanel(AlertPanel alert, String detectionKey) {
+        addAlertPanel(alert, detectionKey, "disease");
+    }
+
+    private void addAlertPanel(AlertPanel alert, String detectionKey, String mode) {
         AlertView view = new AlertView(DashboardActivity.this);
 
         view.setData(
@@ -1977,7 +2837,7 @@ public class DashboardActivity extends AppCompatActivity {
                 return;
             }
 
-            markDetectionAsHandled(detectionKey);
+            markDetectionAsHandled(detectionKey, mode);
         });
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
@@ -1992,13 +2852,21 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void markDetectionAsHandled(String detectionKey) {
+        markDetectionAsHandled(detectionKey, "disease");
+    }
+
+    private void markDetectionAsHandled(String detectionKey, String mode) {
         Map<String, Object> updates = new HashMap<>();
 
         updates.put("handled", true);
-        updates.put("handled_at", getCurrentIsoTime());
         updates.put("status", "handled");
+        updates.put("handled_at", getCurrentIsoTime());
 
-        diseaseResultRef.child(detectionKey)
+        DatabaseReference targetRef = mode != null && mode.equalsIgnoreCase("pest")
+                ? pestResultRef
+                : diseaseResultRef;
+
+        targetRef.child(detectionKey)
                 .updateChildren(updates)
                 .addOnSuccessListener(unused -> Toast.makeText(
                         DashboardActivity.this,
@@ -2021,6 +2889,154 @@ public class DashboardActivity extends AppCompatActivity {
         sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
 
         return sdf.format(new Date());
+    }
+
+    private String getDetectionClassNameForCount(DataSnapshot data, String mode) {
+        if (mode != null && mode.equalsIgnoreCase("pest")) {
+            DataSnapshot bestPest = getBestPestSnapshot(data);
+
+            if (bestPest != null) {
+                String pestClassName = getSafeString(bestPest.child("class_name"));
+
+                if (pestClassName == null || pestClassName.trim().isEmpty()) {
+                    pestClassName = getSafeString(bestPest.child("detected_class"));
+                }
+
+                if (pestClassName == null || pestClassName.trim().isEmpty()) {
+                    pestClassName = getSafeString(bestPest.child("label"));
+                }
+
+                if (pestClassName != null && !pestClassName.trim().isEmpty()) {
+                    return pestClassName;
+                }
+            }
+        }
+
+        String className = getSafeString(data.child("class_name"));
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("detected_class"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("prediction"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("label"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("disease_name"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("result").child("class_name"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            className = getSafeString(data.child("result").child("detected_class"));
+        }
+
+        if (className == null || className.trim().isEmpty()) {
+            if (mode != null && mode.equalsIgnoreCase("pest")) {
+                className = "Hama Terdeteksi";
+            } else if (mode != null && mode.equalsIgnoreCase("disease")) {
+                className = "Penyakit Terdeteksi";
+            } else {
+                className = "Deteksi";
+            }
+        }
+
+        return className;
+    }
+
+    private Double getDetectionConfidenceForMode(DataSnapshot data, String mode) {
+        if (mode != null && mode.equalsIgnoreCase("pest")) {
+            DataSnapshot bestPest = getBestPestSnapshot(data);
+
+            if (bestPest != null) {
+                Double pestConfidence = bestPest.child("confidence").getValue(Double.class);
+
+                if (pestConfidence != null) {
+                    return pestConfidence;
+                }
+            }
+        }
+
+        Double confidence = data.child("confidence").getValue(Double.class);
+
+        if (confidence != null) {
+            return confidence;
+        }
+
+        confidence = data.child("prediction").child("confidence").getValue(Double.class);
+
+        if (confidence != null) {
+            return confidence;
+        }
+
+        confidence = data.child("prediction").child("score").getValue(Double.class);
+
+        if (confidence != null) {
+            return confidence;
+        }
+
+        return data.child("result").child("confidence").getValue(Double.class);
+    }
+
+    private String getDetectionImageUrl(DataSnapshot data) {
+        String imageUrl = getSafeString(data.child("image_url"));
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = getSafeString(data.child("image"));
+        }
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = getSafeString(data.child("imageUrl"));
+        }
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = getSafeString(data.child("url"));
+        }
+
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            imageUrl = getSafeString(data.child("result").child("image_url"));
+        }
+
+        return imageUrl;
+    }
+
+    private DataSnapshot getBestPestSnapshot(DataSnapshot data) {
+        DataSnapshot bestDetectionSnapshot = data.child("prediction").child("best_detection");
+
+        if (bestDetectionSnapshot.exists()) {
+            return bestDetectionSnapshot;
+        }
+
+        DataSnapshot pestSnapshot = data.child("pest");
+
+        if (!pestSnapshot.exists()) {
+            return null;
+        }
+
+        DataSnapshot bestSnapshot = null;
+        double bestConfidence = -1;
+
+        for (DataSnapshot pestItem : pestSnapshot.getChildren()) {
+            Double confidence = pestItem.child("confidence").getValue(Double.class);
+
+            if (confidence == null) {
+                continue;
+            }
+
+            if (confidence > bestConfidence) {
+                bestConfidence = confidence;
+                bestSnapshot = pestItem;
+            }
+        }
+
+        return bestSnapshot;
     }
 
     @Override
@@ -2061,10 +3077,34 @@ public class DashboardActivity extends AppCompatActivity {
     private static class DetectionAlertItem {
         String detectionKey;
         AlertPanel alert;
+        String mode;
+        boolean handled;
+        String timestamp;
+        long timestampMillis;
 
         DetectionAlertItem(String detectionKey, AlertPanel alert) {
             this.detectionKey = detectionKey;
             this.alert = alert;
+            this.mode = "disease";
+            this.handled = false;
+            this.timestamp = alert == null ? "" : alert.date;
+            this.timestampMillis = 0L;
+        }
+
+        DetectionAlertItem(
+                String detectionKey,
+                AlertPanel alert,
+                String mode,
+                boolean handled,
+                String timestamp,
+                long timestampMillis
+        ) {
+            this.detectionKey = detectionKey;
+            this.alert = alert;
+            this.mode = mode;
+            this.handled = handled;
+            this.timestamp = timestamp;
+            this.timestampMillis = timestampMillis;
         }
     }
 

@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ImageView;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.GridLayoutManager;
@@ -29,7 +30,8 @@ public class CameraHistoryActivity extends AppCompatActivity {
     private RecyclerView recyclerView;
     private CameraAdapter adapter;
 
-    private TextView tvTotalHistory, tvTodayHistory, tvAlertHistory;
+    private ImageView btnBackHistory;
+    private TextView tvTotalHistory, tvTodayHistory;
 
     private final List<CameraImage> allImages = new ArrayList<>();
 
@@ -37,6 +39,10 @@ public class CameraHistoryActivity extends AppCompatActivity {
 
     private String labelFilter = "";
     private String sourceFilter = "all";
+
+    private static final int DISPLAY_LIMIT = 300;
+    private static final String DATABASE_URL =
+            "https://lokasighthama-default-rtdb.asia-southeast1.firebasedatabase.app/";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,41 +63,96 @@ public class CameraHistoryActivity extends AppCompatActivity {
         labelFilter = labelFilter.trim();
         sourceFilter = sourceFilter.trim().toLowerCase(Locale.US);
 
+        btnBackHistory = findViewById(R.id.btnBackHistory);
         tvTotalHistory = findViewById(R.id.tvTotalHistory);
         tvTodayHistory = findViewById(R.id.tvTodayHistory);
-        tvAlertHistory = findViewById(R.id.tvAlertHistory);
+
+        btnBackHistory.setOnClickListener(v -> finish());
 
         recyclerView = findViewById(R.id.recyclerView);
-        recyclerView.setLayoutManager(new GridLayoutManager(this, 3));
+        recyclerView.setLayoutManager(new GridLayoutManager(this, 2));
 
         adapter = new CameraAdapter(allImages);
         recyclerView.setAdapter(adapter);
 
-        cameraCapturesRef = FirebaseDatabase.getInstance()
+        cameraCapturesRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("camera_captures");
 
         setInitialSummary();
+
+        loadRealCountsFromFirebase();
         loadImagesFromFirebase();
     }
 
     private void setInitialSummary() {
         tvTotalHistory.setText("0");
         tvTodayHistory.setText("0");
-        tvAlertHistory.setText("0");
+    }
+
+    private void loadRealCountsFromFirebase() {
+        Query query = cameraCapturesRef.orderByChild("uploaded_at");
+
+        query.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot snapshot) {
+                int totalCount = 0;
+                int todayCount = 0;
+
+                for (DataSnapshot data : snapshot.getChildren()) {
+                    String filename = getSafeString(data.child("filename"));
+                    String imageUrl = getSafeString(data.child("image"));
+                    String label = getSafeString(data.child("label"));
+                    String source = getSafeString(data.child("source"));
+                    Long uploadedAt = data.child("uploaded_at").getValue(Long.class);
+
+                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                        continue;
+                    }
+
+                    if (!labelFilter.trim().isEmpty()
+                            && !label.equalsIgnoreCase(labelFilter)) {
+                        continue;
+                    }
+
+                    if (!isAllowedBySourceFilter(label, source, filename)) {
+                        continue;
+                    }
+
+                    totalCount++;
+
+                    if (isToday(uploadedAt)) {
+                        todayCount++;
+                    }
+                }
+
+                tvTotalHistory.setText(String.valueOf(totalCount));
+                tvTodayHistory.setText(String.valueOf(todayCount));
+
+                Log.d("FIREBASE_HISTORY_COUNT", "Total real: " + totalCount);
+                Log.d("FIREBASE_HISTORY_COUNT", "Today real: " + todayCount);
+            }
+
+            @Override
+            public void onCancelled(DatabaseError error) {
+                Toast.makeText(
+                        CameraHistoryActivity.this,
+                        "Gagal menghitung total history: " + error.getMessage(),
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+        });
     }
 
     private void loadImagesFromFirebase() {
         Query query = cameraCapturesRef
-                .orderByChild("uploaded_at")
-                .limitToLast(300);
+                .orderByChild("uploaded_at");
 
         query.addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(DataSnapshot snapshot) {
                 allImages.clear();
 
-                int todayCount = 0;
-                int alertCount = 0;
+                List<CameraImage> filteredImages = new ArrayList<>();
 
                 for (DataSnapshot data : snapshot.getChildren()) {
                     String filename = getSafeString(data.child("filename"));
@@ -99,8 +160,6 @@ public class CameraHistoryActivity extends AppCompatActivity {
                     String label = getSafeString(data.child("label"));
                     String source = getSafeString(data.child("source"));
                     String time = getSafeString(data.child("time"));
-
-                    Long uploadedAt = data.child("uploaded_at").getValue(Long.class);
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
@@ -119,7 +178,7 @@ public class CameraHistoryActivity extends AppCompatActivity {
                     }
 
                     if (source == null || source.trim().isEmpty()) {
-                        if (isMobileSource(label, filename, "")) {
+                        if (isMobileSource(label, source, filename)) {
                             source = "Mobile";
                         } else {
                             source = "CCTV";
@@ -135,7 +194,7 @@ public class CameraHistoryActivity extends AppCompatActivity {
                         continue;
                     }
 
-                    allImages.add(
+                    filteredImages.add(
                             new CameraImage(
                                     filename,
                                     imageUrl,
@@ -144,25 +203,20 @@ public class CameraHistoryActivity extends AppCompatActivity {
                                     normalizeSource(source, label, filename)
                             )
                     );
-
-                    if (isToday(uploadedAt)) {
-                        todayCount++;
-                    }
-
-                    if (isDetectedLabel(label)) {
-                        alertCount++;
-                    }
                 }
 
-                Collections.reverse(allImages);
+                Collections.reverse(filteredImages);
+
+                int limit = Math.min(filteredImages.size(), DISPLAY_LIMIT);
+
+                for (int i = 0; i < limit; i++) {
+                    allImages.add(filteredImages.get(i));
+                }
 
                 adapter.notifyDataSetChanged();
 
-                tvTotalHistory.setText(String.valueOf(allImages.size()));
-                tvTodayHistory.setText(String.valueOf(todayCount));
-                tvAlertHistory.setText(String.valueOf(alertCount));
-
-                Log.d("FIREBASE_HISTORY", "Total data tampil: " + allImages.size());
+                Log.d("FIREBASE_HISTORY", "Data sesuai filter: " + filteredImages.size());
+                Log.d("FIREBASE_HISTORY", "Data yang ditampilkan: " + allImages.size());
                 Log.d("FIREBASE_HISTORY", "Source filter: " + sourceFilter);
                 Log.d("FIREBASE_HISTORY", "Label filter: " + labelFilter);
             }
@@ -208,7 +262,7 @@ public class CameraHistoryActivity extends AppCompatActivity {
                 || filenameLower.contains("mobile")
                 || filenameLower.contains("hp_")
                 || filenameLower.contains("_hp")
-                || filenameLower.contains("hp");
+                || filenameLower.startsWith("hp");
     }
 
     private String normalizeSource(String source, String label, String filename) {
@@ -264,21 +318,6 @@ public class CameraHistoryActivity extends AppCompatActivity {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private boolean isDetectedLabel(String label) {
-        if (label == null) {
-            return false;
-        }
-
-        String lowerLabel = label.toLowerCase(Locale.US);
-
-        return lowerLabel.contains("hama")
-                || lowerLabel.contains("penyakit")
-                || lowerLabel.contains("pest")
-                || lowerLabel.contains("disease")
-                || lowerLabel.contains("detected")
-                || lowerLabel.contains("alert");
     }
 
     private String getSafeString(DataSnapshot snapshot) {

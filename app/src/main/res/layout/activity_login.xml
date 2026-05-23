@@ -83,7 +83,7 @@
                     android:id="@+id/tvWelcomeBack"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Welcome"
+                    android:text="Selamat Datang"
                     android:textColor="#245D23"
                     android:textSize="25sp"
                     android:textStyle="bold" />
@@ -114,20 +114,38 @@
                     android:textSize="15sp" />
 
                 <!-- PASSWORD GARIS BAWAH -->
-                <EditText
-                    android:id="@+id/etPassword"
+                <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="54dp"
                     android:layout_marginTop="28dp"
-                    android:background="@drawable/bg_login_underline"
-                    android:hint="Password"
-                    android:inputType="textPassword"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:singleLine="true"
-                    android:textColor="#245D23"
-                    android:textColorHint="#8AA08A"
-                    android:textSize="15sp" />
+                    android:background="@drawable/bg_login_underline">
+
+                    <EditText
+                        android:id="@+id/etPassword"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@android:color/transparent"
+                        android:hint="Password"
+                        android:inputType="textPassword"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="48dp"
+                        android:singleLine="true"
+                        android:textColor="#245D23"
+                        android:textColorHint="#8AA08A"
+                        android:textSize="15sp" />
+
+                    <ImageView
+                        android:id="@+id/btnTogglePassword"
+                        android:layout_width="42dp"
+                        android:layout_height="match_parent"
+                        android:layout_gravity="end|center_vertical"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackgroundBorderless"
+                        android:padding="10dp"
+                        android:src="@drawable/merem" />
+
+                </FrameLayout>
 
                 <!-- TOMBOL LOGIN -->
                 <TextView
@@ -150,7 +168,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="24dp"
                     android:gravity="center"
-                    android:text="Lokasight Monitoring System"
+                    android:text="© 2026 Lokasight"
                     android:textColor="#8CA08C"
                     android:textSize="12sp"
                     android:textStyle="bold" />

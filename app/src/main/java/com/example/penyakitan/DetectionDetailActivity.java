@@ -11,7 +11,11 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
 
+import java.net.URLDecoder;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 public class DetectionDetailActivity extends AppCompatActivity {
 
@@ -41,6 +45,7 @@ public class DetectionDetailActivity extends AppCompatActivity {
         btnClose = findViewById(R.id.btnCloseDetail);
 
         String imageUrl = getIntent().getStringExtra("image_url");
+        String fileName = getIntent().getStringExtra("file_name");
         String diseaseName = getIntent().getStringExtra("disease_name");
         String date = getIntent().getStringExtra("date");
         String solution = getIntent().getStringExtra("solution");
@@ -60,8 +65,8 @@ public class DetectionDetailActivity extends AppCompatActivity {
             imgDetail.setImageResource(R.drawable.plant);
         }
 
-        tvTitle.setText(safeText(diseaseName, "Tidak Diketahui"));
-        tvDate.setText(safeText(date, "-"));
+        tvTitle.setText(getDisplayTitle(fileName, imageUrl, diseaseName));
+        tvDate.setText(formatDisplayTime(date));
         tvMode.setText(formatLabel(safeText(mode, "-")));
         tvSource.setText(formatLabel(safeText(source, "-")));
 
@@ -140,5 +145,146 @@ public class DetectionDetailActivity extends AppCompatActivity {
         }
 
         return value;
+    }
+
+    private String getDisplayTitle(String fileName, String imageUrl, String fallback) {
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            return fileName;
+        }
+
+        fileName = extractFileName(imageUrl);
+
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            return fileName;
+        }
+
+        return safeText(fallback, "Tidak Diketahui");
+    }
+
+    private String extractFileName(String imageUrl) {
+        if (imageUrl == null || imageUrl.trim().isEmpty() || imageUrl.equals("placeholder")) {
+            return "";
+        }
+
+        try {
+            String cleaned = imageUrl.trim();
+            int queryIndex = cleaned.indexOf("?");
+
+            if (queryIndex >= 0) {
+                cleaned = cleaned.substring(0, queryIndex);
+            }
+
+            int hashIndex = cleaned.indexOf("#");
+
+            if (hashIndex >= 0) {
+                cleaned = cleaned.substring(0, hashIndex);
+            }
+
+            int slashIndex = cleaned.lastIndexOf("/");
+
+            if (slashIndex >= 0 && slashIndex < cleaned.length() - 1) {
+                cleaned = cleaned.substring(slashIndex + 1);
+            }
+
+            return URLDecoder.decode(cleaned, "UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String formatDisplayTime(String value) {
+        if (value == null || value.trim().isEmpty() || value.equals("-")) {
+            return "-";
+        }
+
+        String text = value.trim();
+        Date date = parseMillisDate(text);
+
+        if (date != null) {
+            return formatOutputDate(date);
+        }
+
+        date = parseIsoDate(text);
+
+        if (date == null) {
+            date = parseDate(text, "yyyyMMdd_HHmmss", TimeZone.getTimeZone("UTC"));
+        }
+
+        if (date == null) {
+            date = parseDate(text, "yyyy-MM-dd HH:mm:ss", TimeZone.getDefault());
+        }
+
+        if (date == null) {
+            return text;
+        }
+
+        return formatOutputDate(date);
+    }
+
+    private String formatOutputDate(Date date) {
+        SimpleDateFormat outputFormat = new SimpleDateFormat(
+                "dd MMM yyyy, HH:mm",
+                new Locale("id", "ID")
+        );
+        outputFormat.setTimeZone(TimeZone.getDefault());
+
+        return outputFormat.format(date);
+    }
+
+    private Date parseMillisDate(String text) {
+        try {
+            long rawValue = Long.parseLong(text);
+
+            if (rawValue <= 0) {
+                return null;
+            }
+
+            if (rawValue < 100000000000L) {
+                rawValue *= 1000L;
+            }
+
+            return new Date(rawValue);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Date parseIsoDate(String value) {
+        String normalized = value;
+
+        if (normalized.matches(".*\\.\\d{4,}([+-]\\d{2}:\\d{2}|Z)$")) {
+            normalized = normalized.replaceFirst("\\.(\\d{3})\\d+([+-]\\d{2}:\\d{2}|Z)$", ".$1$2");
+        }
+
+        String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        };
+
+        for (String pattern : patterns) {
+            TimeZone timeZone = pattern.endsWith("'Z'")
+                    ? TimeZone.getTimeZone("UTC")
+                    : TimeZone.getDefault();
+            Date date = parseDate(normalized, pattern, timeZone);
+
+            if (date != null) {
+                return date;
+            }
+        }
+
+        return null;
+    }
+
+    private Date parseDate(String value, String pattern, TimeZone timeZone) {
+        try {
+            SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.US);
+            format.setLenient(false);
+            format.setTimeZone(timeZone);
+            return format.parse(value);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
