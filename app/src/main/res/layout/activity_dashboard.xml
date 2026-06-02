@@ -51,28 +51,7 @@
                 app:tint="#FFFFFF" />
 
             <FrameLayout
-                android:id="@+id/btnLogout"
-                android:layout_width="54dp"
-                android:layout_height="54dp"
-                android:layout_gravity="top|end"
-                android:layout_marginTop="16dp"
-                android:layout_marginEnd="82dp"
-                android:background="@drawable/bg_circle_white"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackgroundBorderless">
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/exit"
-                    app:tint="#D92D20" />
-
-            </FrameLayout>
-
-            <FrameLayout
-                android:id="@+id/btnNotification"
+                android:id="@+id/btnMainMenu"
                 android:layout_width="54dp"
                 android:layout_height="54dp"
                 android:layout_gravity="top|end"
@@ -87,7 +66,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:layout_gravity="center"
-                    android:src="@drawable/ic_notification"
+                    android:src="@drawable/ic_menu"
                     app:tint="#1D1D1D" />
 
                 <TextView
@@ -149,11 +128,13 @@
                     android:orientation="horizontal">
 
                     <View
+                        android:id="@+id/viewOnlineDot"
                         android:layout_width="10dp"
                         android:layout_height="10dp"
                         android:background="@drawable/bg_dot_green" />
 
                     <TextView
+                        android:id="@+id/tvOnlineStatus"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
@@ -343,6 +324,7 @@
                 android:layout_height="220dp"
                 android:layout_marginTop="20dp"
                 android:background="@drawable/bg_card_white"
+                android:clipToOutline="true"
                 android:elevation="5dp">
 
                 <androidx.viewpager2.widget.ViewPager2

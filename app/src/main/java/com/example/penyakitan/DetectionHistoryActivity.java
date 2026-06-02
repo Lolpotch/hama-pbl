@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -34,12 +35,15 @@ import java.util.regex.Pattern;
 public class DetectionHistoryActivity extends AppCompatActivity {
 
     private LinearLayout detectionContainer;
+    private ScrollView detectionScrollView;
     private TextView tvTotalDetection, tvHighConfidence;
     private TextView tvDetectionHistoryTitle, tvDetectionHistorySubtitle;
     private ImageView btnBackDetectionHistory;
 
     private DatabaseReference diseaseResultRef;
     private DatabaseReference pestResultRef;
+    private DatabaseReference detectionSummaryRef;
+    private DatabaseReference handlingSummaryRef;
 
     private static final int LIMIT_EACH_MODE = 100;
     private static final int MAX_RENDER_ITEMS = 100;
@@ -48,6 +52,8 @@ public class DetectionHistoryActivity extends AppCompatActivity {
 
     private boolean diseaseLoaded = false;
     private boolean pestLoaded = false;
+    private boolean showingAll = false;
+    private int pendingScrollY = -1;
 
     private String modeFilter = "all";
     private String handlingFilter = "all";
@@ -62,6 +68,7 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         readModeFilter();
 
         btnBackDetectionHistory = findViewById(R.id.btnBackDetectionHistory);
+        detectionScrollView = findViewById(R.id.detectionScrollView);
         detectionContainer = findViewById(R.id.detectionContainer);
         tvTotalDetection = findViewById(R.id.tvTotalDetection);
         tvHighConfidence = findViewById(R.id.tvHighConfidence);
@@ -82,6 +89,14 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         pestResultRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("inference_result")
                 .child("pest");
+
+        detectionSummaryRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("summary")
+                .child("detection");
+
+        handlingSummaryRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("summary")
+                .child("handling");
 
         showLoadingText();
         loadDetectionCounters();
@@ -178,6 +193,16 @@ public class DetectionHistoryActivity extends AppCompatActivity {
     }
 
     private void loadDetectionCounters() {
+        if (handlingFilter.equals("all")) {
+            loadDetectionCountersFromSummary();
+            return;
+        }
+
+        if (modeFilter.equals("all")) {
+            loadHandlingCountersFromSummary();
+            return;
+        }
+
         final int[] totalCount = {0};
         final int[] highConfidenceCount = {0};
         final boolean[] diseaseDone = {false};
@@ -296,9 +321,11 @@ public class DetectionHistoryActivity extends AppCompatActivity {
     }
 
     private void loadDiseaseDetections() {
-        Query query = diseaseResultRef
-                .orderByChild("time/timestamp")
-                .limitToLast(LIMIT_EACH_MODE);
+        Query query = diseaseResultRef.orderByChild("time/timestamp");
+
+        if (!showingAll) {
+            query = query.limitToLast(LIMIT_EACH_MODE);
+        }
 
         query.addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
@@ -324,9 +351,11 @@ public class DetectionHistoryActivity extends AppCompatActivity {
     }
 
     private void loadPestDetections() {
-        Query query = pestResultRef
-                .orderByChild("time/timestamp")
-                .limitToLast(LIMIT_EACH_MODE);
+        Query query = pestResultRef.orderByChild("time/timestamp");
+
+        if (!showingAll) {
+            query = query.limitToLast(LIMIT_EACH_MODE);
+        }
 
         query.addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
@@ -359,7 +388,7 @@ public class DetectionHistoryActivity extends AppCompatActivity {
             String className = getDetectionClassName(data, defaultMode);
             String imageUrl = getDetectionImageUrl(data);
             String mode = getSafeString(data.child("mode"));
-            String recommendation = getSafeString(data.child("recommendation"));
+            String recommendation = getRecommendationText(data);
             String source = getDetectionSource(data);
             String timestamp = getDetectionTimestamp(data);
             Double confidenceValue = getDetectionConfidence(data, defaultMode);
@@ -459,8 +488,10 @@ public class DetectionHistoryActivity extends AppCompatActivity {
 
         List<DetectionHistoryItem> renderList = new ArrayList<>();
 
+        int maxItems = showingAll ? allDetectionItems.size() : MAX_RENDER_ITEMS;
+
         for (int i = 0; i < allDetectionItems.size(); i++) {
-            if (i >= MAX_RENDER_ITEMS) {
+            if (i >= maxItems) {
                 break;
             }
 
@@ -468,6 +499,12 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         }
 
         showDetectionGrid(renderList);
+
+        if (pendingScrollY >= 0 && detectionScrollView != null) {
+            final int targetScrollY = pendingScrollY;
+            pendingScrollY = -1;
+            detectionScrollView.post(() -> detectionScrollView.scrollTo(0, targetScrollY));
+        }
     }
 
     private void showDetectionGrid(List<DetectionHistoryItem> detectionList) {
@@ -559,6 +596,42 @@ public class DetectionHistoryActivity extends AppCompatActivity {
             emptySpace.setLayoutParams(emptyParams);
             lastRow.addView(emptySpace);
         }
+
+        if (shouldShowLoadAllButton()) {
+            detectionContainer.addView(createLoadAllButton());
+        }
+    }
+
+    private boolean shouldShowLoadAllButton() {
+        return !showingAll && allDetectionItems.size() >= MAX_RENDER_ITEMS;
+    }
+
+    private TextView createLoadAllButton() {
+        TextView button = new TextView(this);
+        button.setText("Lihat Semua");
+        button.setTextColor(0xFFFFFFFF);
+        button.setTextSize(14);
+        button.setGravity(android.view.Gravity.CENTER);
+        button.setTypeface(null, android.graphics.Typeface.BOLD);
+        button.setBackgroundResource(R.drawable.bg_green_button);
+        button.setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12));
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        params.setMargins(0, dpToPx(4), 0, dpToPx(12));
+        button.setLayoutParams(params);
+
+        button.setOnClickListener(v -> {
+            pendingScrollY = detectionScrollView == null ? -1 : detectionScrollView.getScrollY();
+            showingAll = true;
+            button.setText("Memuat...");
+            button.setEnabled(false);
+            loadAllDetections();
+        });
+
+        return button;
     }
 
     private AlertView createDetectionCard(DetectionHistoryItem item) {
@@ -589,6 +662,63 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         view.setOnClickListener(v -> openDetectionDetail(item));
 
         return view;
+    }
+
+    private void loadDetectionCountersFromSummary() {
+        detectionSummaryRef.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                int totalCount;
+                int highConfidenceCount;
+
+                if (modeFilter.equals("disease")) {
+                    totalCount = getIntValue(snapshot.child("disease_count"));
+                    highConfidenceCount = getIntValue(snapshot.child("disease_high_confidence_count"));
+                } else if (modeFilter.equals("pest")) {
+                    totalCount = getIntValue(snapshot.child("pest_count"));
+                    highConfidenceCount = getIntValue(snapshot.child("pest_high_confidence_count"));
+                } else {
+                    totalCount = getIntValue(snapshot.child("total_count"));
+                    highConfidenceCount = getIntValue(snapshot.child("high_confidence_count"));
+                }
+
+                tvTotalDetection.setText(String.valueOf(totalCount));
+                tvHighConfidence.setText(String.valueOf(highConfidenceCount));
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                tvTotalDetection.setText("0");
+                tvHighConfidence.setText("0");
+            }
+        });
+    }
+
+    private void loadHandlingCountersFromSummary() {
+        handlingSummaryRef.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                int totalCount;
+                int highConfidenceCount;
+
+                if (handlingFilter.equals("handled")) {
+                    totalCount = getIntValue(snapshot.child("handled_count"));
+                    highConfidenceCount = getIntValue(snapshot.child("handled_high_confidence_count"));
+                } else {
+                    totalCount = getIntValue(snapshot.child("unhandled_count"));
+                    highConfidenceCount = getIntValue(snapshot.child("unhandled_high_confidence_count"));
+                }
+
+                tvTotalDetection.setText(String.valueOf(totalCount));
+                tvHighConfidence.setText(String.valueOf(highConfidenceCount));
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                tvTotalDetection.setText("0");
+                tvHighConfidence.setText("0");
+            }
+        });
     }
 
     private void openDetectionDetail(DetectionHistoryItem item) {
@@ -656,9 +786,13 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         }
 
         Map<String, Object> updates = new HashMap<>();
+        String handledAt = getCurrentIsoTime();
+
         updates.put("handled", true);
-        updates.put("status", "handled");
-        updates.put("handled_at", getCurrentIsoTime());
+        updates.put("handled_at", handledAt);
+        updates.put("status/handled", true);
+        updates.put("status/status", "handled");
+        updates.put("status/handled_at", handledAt);
 
         DatabaseReference targetRef = item.mode != null && item.mode.equalsIgnoreCase("pest")
                 ? pestResultRef
@@ -927,42 +1061,43 @@ public class DetectionHistoryActivity extends AppCompatActivity {
     }
 
     private String getDetectionImageUrl(DataSnapshot data) {
-        String imageUrl = getSafeString(data.child("image_url"));
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("image"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("imageUrl"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("url"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("result").child("image_url"));
-        }
-
-        return imageUrl;
+        return getFirstSafeString(
+                data,
+                "image/annotated_image_url",
+                "image/image_url",
+                "image/input_image_url",
+                "annotated_image_url",
+                "image_url",
+                "image",
+                "imageUrl",
+                "url",
+                "result/image_url"
+        );
     }
 
     private String getDetectionSource(DataSnapshot data) {
-        String source = getSafeString(data.child("source"));
+        String source = getSafeString(data.child("source_info").child("source"));
 
         if (source == null || source.trim().isEmpty()) {
-            source = getSafeString(data.child("source_info"));
+            source = getSafeString(data.child("source"));
+        }
+
+        if (source == null || source.trim().isEmpty()) {
+            source = getSafeString(data.child("source_info").child("mode"));
         }
 
         return source;
     }
 
     private String getDetectionTimestamp(DataSnapshot data) {
-        String timestamp = getSafeString(data.child("timestamp"));
+        String timestamp = getSafeString(data.child("time").child("created_at_iso"));
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
             timestamp = getSafeString(data.child("time").child("timestamp_iso"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("created_at"));
         }
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
@@ -970,11 +1105,7 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         }
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
-            timestamp = getSafeString(data.child("time").child("created_at_iso"));
-        }
-
-        if (timestamp == null || timestamp.trim().isEmpty()) {
-            timestamp = getSafeString(data.child("time").child("created_at"));
+            timestamp = getSafeString(data.child("timestamp"));
         }
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
@@ -1144,6 +1275,113 @@ public class DetectionHistoryActivity extends AppCompatActivity {
         }
 
         return String.valueOf(value);
+    }
+
+    private String getRecommendationText(DataSnapshot data) {
+        StringBuilder builder = new StringBuilder();
+        DataSnapshot recommendation = data.child("recommendation");
+
+        appendRecommendationActions(builder, recommendation.child("actions"));
+        appendRecommendationActions(builder, recommendation.child("recommended_actions"));
+
+        String disclaimer = getSafeString(recommendation.child("disclaimer"));
+
+        if (disclaimer == null || disclaimer.trim().isEmpty()) {
+            disclaimer = getSafeString(data.child("disclaimer"));
+        }
+
+        if (disclaimer != null && !disclaimer.trim().isEmpty()) {
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            builder.append("Catatan: ").append(disclaimer.trim());
+        }
+
+        if (builder.length() > 0) {
+            return builder.toString().trim();
+        }
+
+        String summary = getSafeString(recommendation.child("summary"));
+
+        if (summary != null && !summary.trim().isEmpty()) {
+            return summary;
+        }
+
+        return getSafeString(recommendation);
+    }
+
+    private void appendRecommendationActions(StringBuilder builder, DataSnapshot actionsSnapshot) {
+        if (actionsSnapshot == null || !actionsSnapshot.exists()) {
+            return;
+        }
+
+        if (!actionsSnapshot.hasChildren()) {
+            String action = getSafeString(actionsSnapshot);
+
+            if (action != null && !action.trim().isEmpty()) {
+                builder.append("- ").append(action.trim()).append("\n");
+            }
+            return;
+        }
+
+        for (DataSnapshot actionSnapshot : actionsSnapshot.getChildren()) {
+            String action = getActionText(actionSnapshot);
+
+            if (action != null && !action.trim().isEmpty()) {
+                builder.append("- ").append(action.trim()).append("\n");
+            }
+        }
+    }
+
+    private String getActionText(DataSnapshot snapshot) {
+        String action = getSafeString(snapshot);
+
+        if (action != null && !action.trim().isEmpty()) {
+            return action;
+        }
+
+        return getFirstSafeString(
+                snapshot,
+                "action",
+                "text",
+                "title",
+                "description",
+                "value"
+        );
+    }
+
+    private String getFirstSafeString(DataSnapshot data, String... paths) {
+        for (String path : paths) {
+            String value = getSafeString(data.child(path));
+
+            if (value != null && !value.trim().isEmpty()) {
+                return value;
+            }
+        }
+
+        return "";
+    }
+
+    private int getIntValue(DataSnapshot snapshot) {
+        Integer intValue = snapshot.getValue(Integer.class);
+
+        if (intValue != null) {
+            return intValue;
+        }
+
+        Long longValue = snapshot.getValue(Long.class);
+
+        if (longValue != null) {
+            return longValue.intValue();
+        }
+
+        String text = getSafeString(snapshot);
+
+        try {
+            return Integer.parseInt(text);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private int dpToPx(int dp) {

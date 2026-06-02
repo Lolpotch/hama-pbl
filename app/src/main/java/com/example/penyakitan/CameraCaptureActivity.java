@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -20,6 +21,10 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+
+import com.google.android.gms.tasks.Tasks;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 
 import org.json.JSONObject;
 
@@ -43,7 +48,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
     private final String bucketPublicUrl =
             "https://storage.googleapis.com/lokasight/captures/";
 
-    private static final int JPEG_UPLOAD_QUALITY = 85;
+    private static final int CUSTOM_SAMPLE_STEP = 2;
+    private static final int CUSTOM_COLOR_BITS = 5;
+    private static final int JPEG_OUTPUT_QUALITY = 100;
 
     private ImageView imgUploadPreview;
     private ProgressBar progressUpload;
@@ -55,6 +62,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
     private Uri capturedImageUri;
     private File capturedImageFile;
     private String localFilename;
+    private String resultFilename;
 
     // Mode default kalau activity dibuka tanpa pilihan
     private String scanMode = "disease";
@@ -227,17 +235,22 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     localFilename = imageFile.getName();
                 }
 
+                String firebaseIdToken = getFirebaseIdToken();
+                Log.d("FIREBASE_TOKEN", firebaseIdToken);
+
                 long originalSize = imageFile.length();
 
                 Log.d("IMAGE_COMPRESS", "Original filename: " + localFilename);
                 Log.d("IMAGE_COMPRESS", "Original size bytes: " + originalSize);
                 Log.d("IMAGE_COMPRESS", "Original size KB: " + (originalSize / 1024));
 
-                compressImageFileInPlace(imageFile, JPEG_UPLOAD_QUALITY);
+                compressImageFileInPlace(imageFile);
 
                 long compressedSize = imageFile.length();
 
-                Log.d("IMAGE_COMPRESS", "Compressed quality: " + JPEG_UPLOAD_QUALITY);
+                Log.d("IMAGE_COMPRESS", "Custom sample step: " + CUSTOM_SAMPLE_STEP);
+                Log.d("IMAGE_COMPRESS", "Custom color bits: " + CUSTOM_COLOR_BITS);
+                Log.d("IMAGE_COMPRESS", "JPEG output quality: " + JPEG_OUTPUT_QUALITY);
                 Log.d("IMAGE_COMPRESS", "Compressed size bytes: " + compressedSize);
                 Log.d("IMAGE_COMPRESS", "Compressed size KB: " + (compressedSize / 1024));
 
@@ -247,7 +260,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     }
                 });
 
-                String uploadResponse = uploadImageFile(imageFile);
+                String uploadResponse = uploadImageFile(imageFile, firebaseIdToken);
                 int uploadResponseCode = lastHttpResponseCode;
 
                 Log.d("UPLOAD_RESPONSE", "Code: " + uploadResponseCode);
@@ -274,6 +287,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 if (serverFilename == null || serverFilename.trim().isEmpty()) {
                     serverFilename = localFilename;
                 }
+                resultFilename = serverFilename;
 
                 String uploadedImageUrl = extractImageUrlFromResponse(uploadResponse);
 
@@ -293,7 +307,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     }
                 });
 
-                String inferenceResponse = runInferenceFromImageUrl(uploadedImageUrl);
+                String inferenceResponse = runInferenceFromImageUrl(uploadedImageUrl, firebaseIdToken);
                 int inferenceResponseCode = lastHttpResponseCode;
 
                 Log.d("INFERENCE_RESPONSE", "Code: " + inferenceResponseCode);
@@ -335,7 +349,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
         }).start();
     }
 
-    private String uploadImageFile(File imageFile) throws Exception {
+    private String uploadImageFile(File imageFile, String firebaseIdToken) throws Exception {
         HttpURLConnection conn = null;
 
         try {
@@ -353,6 +367,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     "Content-Type",
                     "multipart/form-data; boundary=" + boundary
             );
+            addFirebaseAuthorizationHeader(conn, firebaseIdToken);
 
             OutputStream os = conn.getOutputStream();
 
@@ -385,7 +400,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
         }
     }
 
-    private String runInferenceFromImageUrl(String imageUrl) throws Exception {
+    private String runInferenceFromImageUrl(String imageUrl, String firebaseIdToken) throws Exception {
         HttpURLConnection conn = null;
 
         try {
@@ -407,6 +422,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     "Content-Type",
                     "application/x-www-form-urlencoded; charset=UTF-8"
             );
+            addFirebaseAuthorizationHeader(conn, firebaseIdToken);
 
             String formData = "image_url=" + URLEncoder.encode(
                     imageUrl,
@@ -429,24 +445,50 @@ public class CameraCaptureActivity extends AppCompatActivity {
         }
     }
 
-    private void compressImageFileInPlace(File imageFile, int quality) throws Exception {
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+    private String getFirebaseIdToken() throws Exception {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
 
-        Bitmap bitmap = BitmapFactory.decodeFile(
-                imageFile.getAbsolutePath(),
-                options
+        if (currentUser == null) {
+            throw new Exception("User belum login. Silakan login ulang.");
+        }
+
+        String token = Tasks.await(currentUser.getIdToken(false)).getToken();
+
+        if (token == null || token.trim().isEmpty()) {
+            throw new Exception("Token login Firebase tidak tersedia. Silakan login ulang.");
+        }
+
+        return token;
+    }
+
+    private void addFirebaseAuthorizationHeader(
+            HttpURLConnection conn,
+            String firebaseIdToken
+    ) {
+        conn.setRequestProperty(
+                "Authorization",
+                "Bearer " + firebaseIdToken
         );
+    }
+
+    private void compressImageFileInPlace(File imageFile) throws Exception {
+        Bitmap bitmap = BitmapFactory.decodeFile(imageFile.getAbsolutePath());
 
         if (bitmap == null) {
             throw new Exception("Gagal decode gambar untuk kompresi");
         }
 
+        Bitmap compressedBitmap = lossyCompressBitmap(
+                bitmap,
+                CUSTOM_SAMPLE_STEP,
+                CUSTOM_COLOR_BITS
+        );
+
         FileOutputStream fos = new FileOutputStream(imageFile, false);
 
-        bitmap.compress(
+        compressedBitmap.compress(
                 Bitmap.CompressFormat.JPEG,
-                quality,
+                JPEG_OUTPUT_QUALITY,
                 fos
         );
 
@@ -454,6 +496,45 @@ public class CameraCaptureActivity extends AppCompatActivity {
         fos.close();
 
         bitmap.recycle();
+        compressedBitmap.recycle();
+    }
+
+    private Bitmap lossyCompressBitmap(Bitmap original, int sampleStep, int colorBits) {
+        int newWidth = Math.max(1, original.getWidth() / sampleStep);
+        int newHeight = Math.max(1, original.getHeight() / sampleStep);
+
+        Bitmap result = Bitmap.createBitmap(
+                newWidth,
+                newHeight,
+                Bitmap.Config.ARGB_8888
+        );
+
+        for (int y = 0; y < newHeight; y++) {
+            for (int x = 0; x < newWidth; x++) {
+                int sourceX = Math.min(original.getWidth() - 1, x * sampleStep);
+                int sourceY = Math.min(original.getHeight() - 1, y * sampleStep);
+                int pixel = original.getPixel(sourceX, sourceY);
+
+                result.setPixel(x, y, quantizeColor(pixel, colorBits));
+            }
+        }
+
+        return result;
+    }
+
+    private int quantizeColor(int color, int bits) {
+        int levels = 1 << bits;
+        int shift = 8 - bits;
+
+        int red = quantizeChannel(Color.red(color), shift, levels);
+        int green = quantizeChannel(Color.green(color), shift, levels);
+        int blue = quantizeChannel(Color.blue(color), shift, levels);
+
+        return Color.rgb(red, green, blue);
+    }
+
+    private int quantizeChannel(int value, int shift, int levels) {
+        return (value >> shift) * 255 / (levels - 1);
     }
 
     private void writeFileToOutputStream(File file, OutputStream outputStream) throws Exception {
@@ -512,6 +593,11 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 return json.optString("filename", "");
             }
 
+            JSONObject data = json.optJSONObject("data");
+            if (data != null && data.has("filename")) {
+                return data.optString("filename", "");
+            }
+
             if (json.has("name")) {
                 return json.optString("name", "");
             }
@@ -530,6 +616,14 @@ public class CameraCaptureActivity extends AppCompatActivity {
             }
 
             JSONObject json = new JSONObject(responseMessage);
+            JSONObject data = json.optJSONObject("data");
+            if (data != null) {
+                JSONObject imageInfo = data.optJSONObject("image_info");
+
+                if (imageInfo != null && imageInfo.has("image_url")) {
+                    return imageInfo.optString("image_url", "");
+                }
+            }
 
             if (json.has("image")) {
                 return json.optString("image", "");
@@ -578,6 +672,14 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
         if (imageUri != null) {
             intent.putExtra("image_uri", imageUri.toString());
+        }
+
+        String filename = resultFilename;
+        if (filename == null || filename.trim().isEmpty()) {
+            filename = localFilename;
+        }
+        if (filename != null && !filename.trim().isEmpty()) {
+            intent.putExtra("filename", filename);
         }
 
         intent.putExtra("responseCode", responseCode);

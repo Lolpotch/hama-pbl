@@ -13,7 +13,10 @@ import android.widget.TextView;
 
 import com.bumptech.glide.Glide;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,7 +88,7 @@ public class AlertView extends LinearLayout {
         }
 
         tvDiseaseName.setText(safeText(diseaseName, "Tidak Diketahui"));
-        tvDate.setText(safeText(date, "-"));
+        tvDate.setText(formatDateText(safeText(date, "-")));
         tvSolution.setText(safeText(solution, "Belum ada rekomendasi penanganan."));
 
         String mode = extractValue(description, "Mode");
@@ -100,8 +103,8 @@ public class AlertView extends LinearLayout {
             source = "kamera";
         }
 
-        tvAlertType.setText(formatBadgeText(mode));
-        tvAlertSource.setText(formatBadgeText(source));
+        tvAlertType.setText(formatModeText(mode));
+        tvAlertSource.setText(formatSourceText(source));
 
         String cleanedDescription = cleanDescription(description);
 
@@ -220,14 +223,22 @@ public class AlertView extends LinearLayout {
                 continue;
             }
 
-            if (!showModeSourceInDescription) {
-                if (lower.startsWith("mode")) {
-                    continue;
+            if (lower.startsWith("mode")) {
+                if (showModeSourceInDescription) {
+                    builder.append("Mode: ")
+                            .append(formatModeText(line.substring(line.indexOf(":") + 1).trim()))
+                            .append("\n");
                 }
+                continue;
+            }
 
-                if (lower.startsWith("source")) {
-                    continue;
+            if (lower.startsWith("source")) {
+                if (showModeSourceInDescription) {
+                    builder.append("Sumber: ")
+                            .append(formatBadgeText(line.substring(line.indexOf(":") + 1).trim()))
+                            .append("\n");
                 }
+                continue;
             }
 
             builder.append(line).append("\n");
@@ -283,5 +294,132 @@ public class AlertView extends LinearLayout {
         }
 
         return cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1).toLowerCase();
+    }
+
+    private String formatModeText(String value) {
+        if (value == null) {
+            return "-";
+        }
+
+        String cleaned = value.trim();
+
+        if (cleaned.equalsIgnoreCase("pest")) {
+            return "Hama";
+        }
+
+        if (cleaned.equalsIgnoreCase("disease")) {
+            return "Penyakit";
+        }
+
+        return formatBadgeText(cleaned);
+    }
+
+    private String formatSourceText(String value) {
+        String formatted = formatBadgeText(value);
+
+        if (formatted.equals("-")) {
+            return "-";
+        }
+
+        if (formatted.equalsIgnoreCase("cctv")) {
+            return "CCTV";
+        }
+
+        if (formatted.equalsIgnoreCase("mobile") || formatted.equalsIgnoreCase("hp")) {
+            return "Mobile";
+        }
+
+        return formatted;
+    }
+
+    private String formatDateText(String value) {
+        if (value == null || value.trim().isEmpty() || value.trim().equals("-")) {
+            return "-";
+        }
+
+        String text = value.trim();
+        long millis = parseDateMillis(text);
+
+        if (millis <= 0) {
+            return text;
+        }
+
+        SimpleDateFormat displayFormat = new SimpleDateFormat(
+                "dd MMM yyyy, HH:mm",
+                new Locale("id", "ID")
+        );
+
+        return displayFormat.format(new Date(millis));
+    }
+
+    private long parseDateMillis(String value) {
+        String text = value;
+
+        if (text.matches(".*\\.\\d{4,}([+-]\\d{2}:\\d{2}|Z)$")) {
+            text = text.replaceFirst("\\.(\\d{3})\\d+([+-]\\d{2}:\\d{2}|Z)$", ".$1$2");
+        }
+
+        try {
+            long rawValue = Long.parseLong(text);
+
+            if (rawValue > 0 && rawValue < 100000000000L) {
+                return rawValue * 1000L;
+            }
+
+            return rawValue;
+        } catch (Exception ignored) {
+        }
+
+        String[] utcPatterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        };
+
+        for (String pattern : utcPatterns) {
+            long millis = parseDateMillisWithPattern(text, pattern, TimeZone.getTimeZone("UTC"));
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        String[] localPatterns = {
+                "yyyyMMdd_HHmmss",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd HH:mm",
+                "dd-MM-yyyy HH:mm:ss",
+                "dd-MM-yyyy HH:mm",
+                "dd/MM/yyyy HH:mm:ss",
+                "dd/MM/yyyy HH:mm"
+        };
+
+        for (String pattern : localPatterns) {
+            long millis = parseDateMillisWithPattern(text, pattern, TimeZone.getDefault());
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        return -1L;
+    }
+
+    private long parseDateMillisWithPattern(String text, String pattern, TimeZone timeZone) {
+        try {
+            SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.US);
+            format.setLenient(false);
+            format.setTimeZone(timeZone);
+
+            Date date = format.parse(text);
+
+            if (date != null) {
+                return date.getTime();
+            }
+        } catch (Exception ignored) {
+        }
+
+        return -1L;
     }
 }

@@ -1,13 +1,20 @@
 package com.example.penyakitan;
 
 import android.app.Dialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -16,6 +23,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -23,6 +31,7 @@ import android.app.AlertDialog;
 import com.google.firebase.auth.FirebaseAuth;
 
 import androidx.annotation.NonNull;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.viewpager2.widget.ViewPager2;
 
@@ -56,6 +65,7 @@ public class DashboardActivity extends AppCompatActivity {
 
     private TextView tvTemperature, tvHumidity;
     private TextView tvLastUpdate;
+    private TextView tvOnlineStatus;
     private TextView tvTemperatureStatus, tvHumidityStatus;
     private LinearLayout cardTemperatureSensor, cardHumiditySensor;
 
@@ -63,8 +73,9 @@ public class DashboardActivity extends AppCompatActivity {
     private TextView tvSeeAllDetection;
     private TextView tvCarouselLabel;
 
-    private FrameLayout btnNotification;
+    private FrameLayout btnMainMenu;
     private TextView tvNotificationBadge;
+    private int currentNotificationUnreadCount = 0;
 
     private ImageButton btnOpenCamera;
     private TextView btnCaptureNow;
@@ -76,7 +87,6 @@ public class DashboardActivity extends AppCompatActivity {
 
     private ViewPager2 viewPagerLatestImages;
     private LatestImageAdapter latestImageAdapter;
-    private FrameLayout btnLogout;
 
     private final List<String> latestImageUrls = new ArrayList<>();
     private final List<String> latestImageLabels = new ArrayList<>();
@@ -85,8 +95,12 @@ public class DashboardActivity extends AppCompatActivity {
     private DatabaseReference sensorLatestRef;
     private DatabaseReference sensorHistoryRef;
     private DatabaseReference cameraCapturesRef;
+    private DatabaseReference cameraSummaryRef;
+    private DatabaseReference detectionSummaryRef;
+    private DatabaseReference handlingSummaryRef;
     private DatabaseReference diseaseResultRef;
     private DatabaseReference pestResultRef;
+    private DatabaseReference notificationItemsRef;
 
     private ImageView imgPlantLeft, imgPlantRight, imgPlantHp;
     private TextView tvPlantLeftTime, tvPlantRightTime, tvPlantHpTime;
@@ -102,6 +116,7 @@ public class DashboardActivity extends AppCompatActivity {
     private TextView tvDiseaseDetectedCount;
     private TextView tvUnhandledHandlingCount;
     private TextView tvHandledHandlingCount;
+    private View viewOnlineDot;
 
 
     private ScrollView dashboardScrollView;
@@ -124,6 +139,8 @@ public class DashboardActivity extends AppCompatActivity {
     private boolean latestPestLoaded = false;
     private long latestSensorUpdateMillis = -1L;
     private long latestImageUpdateMillis = -1L;
+    private long lastBackPressedMillis = 0L;
+    private Toast exitToast;
 
     private View dotCarousel1, dotCarousel2, dotCarousel3, dotCarousel4;
     private final List<View> carouselDots = new ArrayList<>();
@@ -134,9 +151,17 @@ public class DashboardActivity extends AppCompatActivity {
     private static final String PREF_READ_KEYS = "read_notification_keys";
     private static final String DATABASE_URL =
             "https://lokasighthama-default-rtdb.asia-southeast1.firebasedatabase.app/";
+    private static final String[] CAMERA_CAPTURE_GROUPS = {"mobile", "depan", "belakang"};
+    private static final int LATEST_CAMERA_GROUP_LIMIT = 4;
+    private static final long ONLINE_DATA_FRESHNESS_MILLIS = 5 * 60 * 1000L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
+
+    private interface CameraSnapshotsCallback {
+        void onData(List<DataSnapshot> snapshots);
+        void onCancelled(DatabaseError error);
+    }
 
     private final Runnable lastUpdateRunnable = new Runnable() {
         @Override
@@ -172,6 +197,7 @@ public class DashboardActivity extends AppCompatActivity {
         initView();
         initFirebase();
         setupButton();
+        setupBackPressedHandler();
 
         loadNotificationBadge();
         loadLatestCarouselImages();
@@ -196,6 +222,8 @@ public class DashboardActivity extends AppCompatActivity {
         tvTemperature = findViewById(R.id.tvTemperature);
         tvHumidity = findViewById(R.id.tvHumidity);
         tvLastUpdate = findViewById(R.id.tvLastUpdate);
+        tvOnlineStatus = findViewById(R.id.tvOnlineStatus);
+        viewOnlineDot = findViewById(R.id.viewOnlineDot);
 
         tvTemperatureStatus = findViewById(R.id.tvTemperatureStatus);
         tvHumidityStatus = findViewById(R.id.tvHumidityStatus);
@@ -206,9 +234,8 @@ public class DashboardActivity extends AppCompatActivity {
         tvSeeAllDetection = findViewById(R.id.tvSeeAllDetection);
         tvCarouselLabel = findViewById(R.id.tvCarouselLabel);
 
-        btnNotification = findViewById(R.id.btnNotification);
+        btnMainMenu = findViewById(R.id.btnMainMenu);
         tvNotificationBadge = findViewById(R.id.tvNotificationBadge);
-        btnLogout = findViewById(R.id.btnLogout);
 
         btnOpenCamera = findViewById(R.id.btnOpenCamera);
         btnCaptureNow = findViewById(R.id.btnCaptureNow);
@@ -322,6 +349,18 @@ public class DashboardActivity extends AppCompatActivity {
         cameraCapturesRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("camera_captures");
 
+        cameraSummaryRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("summary")
+                .child("camera");
+
+        detectionSummaryRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("summary")
+                .child("detection");
+
+        handlingSummaryRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("summary")
+                .child("handling");
+
         diseaseResultRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("inference_result")
                 .child("disease");
@@ -329,6 +368,9 @@ public class DashboardActivity extends AppCompatActivity {
         pestResultRef = FirebaseDatabase.getInstance(DATABASE_URL)
                 .getReference("inference_result")
                 .child("pest");
+
+        notificationItemsRef = FirebaseDatabase.getInstance(DATABASE_URL)
+                .getReference("notification_items");
     }
 
     private void setupButton() {
@@ -362,7 +404,9 @@ public class DashboardActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
-        btnNotification.setOnClickListener(v -> showNotificationDialog());
+        if (btnMainMenu != null) {
+            btnMainMenu.setOnClickListener(this::showMainMenu);
+        }
 
         if (cardTemperatureSensor != null) {
             cardTemperatureSensor.setOnClickListener(v -> openSensorDetail("temperature"));
@@ -378,10 +422,6 @@ public class DashboardActivity extends AppCompatActivity {
 
         if (btnFloatCamera != null) {
             btnFloatCamera.setOnClickListener(v -> toggleFloatingCameraMenu());
-        }
-
-        if (btnLogout != null) {
-            btnLogout.setOnClickListener(v -> showLogoutDialog());
         }
 
         if (cameraMenuOverlay != null) {
@@ -423,6 +463,189 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         setupFloatingButtonScrollBehavior();
+    }
+
+    private void setupBackPressedHandler() {
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleDashboardBackPressed();
+            }
+        });
+    }
+
+    private void handleDashboardBackPressed() {
+        if (isFloatMenuOpen) {
+            closeFloatingCameraMenu();
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+
+        if (now - lastBackPressedMillis <= 2000) {
+            if (exitToast != null) {
+                exitToast.cancel();
+            }
+
+            finishAffinity();
+            return;
+        }
+
+        lastBackPressedMillis = now;
+        exitToast = Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT);
+        exitToast.show();
+    }
+
+    private void showMainMenu(View anchor) {
+        int popupWidth = dpToPx(236);
+        LinearLayout menuContent = new LinearLayout(this);
+        menuContent.setOrientation(LinearLayout.VERTICAL);
+        menuContent.setBackgroundResource(R.drawable.bg_menu_popup);
+        menuContent.setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8));
+
+        PopupWindow popupWindow = new PopupWindow(
+                menuContent,
+                popupWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                true
+        );
+
+        View notificationMenu = createMainMenuItem(
+                "Notifikasi",
+                R.drawable.ic_notification,
+                Color.parseColor("#1D1D1D"),
+                Color.parseColor("#EEF7EE"),
+                Color.parseColor("#245D23"),
+                currentNotificationUnreadCount
+        );
+        View logoutMenu = createMainMenuItem(
+                "Logout",
+                R.drawable.exit,
+                Color.parseColor("#D92D20"),
+                Color.parseColor("#FEE4E2"),
+                Color.parseColor("#D92D20"),
+                0
+        );
+
+        notificationMenu.setOnClickListener(v -> {
+            popupWindow.dismiss();
+            showNotificationDialog();
+        });
+
+        logoutMenu.setOnClickListener(v -> {
+            popupWindow.dismiss();
+            showLogoutDialog();
+        });
+
+        menuContent.addView(notificationMenu);
+        menuContent.addView(createMainMenuDivider());
+        menuContent.addView(logoutMenu);
+
+        popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        popupWindow.setOutsideTouchable(true);
+        popupWindow.setClippingEnabled(true);
+        popupWindow.setElevation(dpToPx(8));
+        popupWindow.showAsDropDown(anchor, anchor.getWidth() - popupWidth, dpToPx(10));
+    }
+
+    private View createMainMenuDivider() {
+        View divider = new View(this);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1
+        );
+        params.setMargins(dpToPx(12), dpToPx(4), dpToPx(12), dpToPx(4));
+        divider.setLayoutParams(params);
+        divider.setBackgroundColor(Color.parseColor("#EEF0F2"));
+        return divider;
+    }
+
+    private View createMainMenuItem(
+            String text,
+            int iconRes,
+            int textColor,
+            int iconBackgroundColor,
+            int iconTintColor,
+            int badgeCount
+    ) {
+        LinearLayout item = new LinearLayout(this);
+        item.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dpToPx(56)
+        ));
+        item.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        item.setOrientation(LinearLayout.HORIZONTAL);
+        item.setPadding(dpToPx(12), 0, dpToPx(12), 0);
+        item.setClickable(true);
+        item.setFocusable(true);
+        TypedValue outValue = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, outValue, true);
+        item.setBackgroundResource(outValue.resourceId);
+
+        FrameLayout iconContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams iconContainerParams = new LinearLayout.LayoutParams(
+                dpToPx(36),
+                dpToPx(36)
+        );
+        iconContainer.setLayoutParams(iconContainerParams);
+        iconContainer.setBackground(createRoundedColorDrawable(iconBackgroundColor, 18));
+
+        ImageView icon = new ImageView(this);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(
+                dpToPx(20),
+                dpToPx(20),
+                android.view.Gravity.CENTER
+        );
+        icon.setLayoutParams(iconParams);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(iconTintColor);
+        iconContainer.addView(icon);
+
+        TextView label = new TextView(this);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+        );
+        labelParams.setMargins(dpToPx(12), 0, 0, 0);
+        label.setLayoutParams(labelParams);
+        label.setText(text);
+        label.setTextColor(textColor);
+        label.setTextSize(15);
+        label.setTypeface(null, android.graphics.Typeface.BOLD);
+        label.setSingleLine(true);
+
+        item.addView(iconContainer);
+        item.addView(label);
+
+        if (badgeCount > 0) {
+            TextView badge = new TextView(this);
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    dpToPx(24)
+            );
+            badgeParams.setMargins(dpToPx(8), 0, 0, 0);
+            badge.setLayoutParams(badgeParams);
+            badge.setMinWidth(dpToPx(24));
+            badge.setPadding(dpToPx(7), 0, dpToPx(7), 0);
+            badge.setBackgroundResource(R.drawable.bg_notification_badge);
+            badge.setGravity(android.view.Gravity.CENTER);
+            badge.setText(formatNotificationBadgeCount(badgeCount));
+            badge.setTextColor(Color.WHITE);
+            badge.setTextSize(12);
+            badge.setTypeface(null, android.graphics.Typeface.BOLD);
+            item.addView(badge);
+        }
+
+        return item;
+    }
+
+    private android.graphics.drawable.GradientDrawable createRoundedColorDrawable(int color, int radiusDp) {
+        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dpToPx(radiusDp));
+        return drawable;
     }
 
     private void toggleFloatingCameraMenu() {
@@ -659,44 +882,16 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadNotificationBadge() {
-        diseaseResultRef.addValueEventListener(new ValueEventListener() {
+        notificationItemsRef
+                .orderByChild("timestamp_ms")
+                .limitToLast(50)
+                .addValueEventListener(new ValueEventListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
+            public void onDataChange(@NonNull DataSnapshot notificationSnapshot) {
                 sensorLatestRef.addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot sensorSnapshot) {
-                        List<NotificationItem> items = buildNotificationItems(diseaseSnapshot, sensorSnapshot);
-                        int unreadCount = 0;
-
-                        for (NotificationItem item : items) {
-                            if (!isNotificationRead(item.notificationKey)) {
-                                unreadCount++;
-                            }
-                        }
-
-                        updateNotificationBadge(unreadCount);
-                    }
-
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError error) {
-                        updateNotificationBadge(0);
-                    }
-                });
-            }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-                updateNotificationBadge(0);
-            }
-        });
-
-        sensorLatestRef.addValueEventListener(new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot sensorSnapshot) {
-                diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                        List<NotificationItem> items = buildNotificationItems(diseaseSnapshot, sensorSnapshot);
+                        List<NotificationItem> items = buildNotificationItems(notificationSnapshot, sensorSnapshot);
                         int unreadCount = 0;
 
                         for (NotificationItem item : items) {
@@ -725,17 +920,22 @@ public class DashboardActivity extends AppCompatActivity {
     private void updateNotificationBadge(int count) {
         if (tvNotificationBadge == null) return;
 
+        currentNotificationUnreadCount = count;
+
         if (count > 0) {
             tvNotificationBadge.setVisibility(View.VISIBLE);
-
-            if (count > 99) {
-                tvNotificationBadge.setText("99+");
-            } else {
-                tvNotificationBadge.setText(String.valueOf(count));
-            }
+            tvNotificationBadge.setText(formatNotificationBadgeCount(count));
         } else {
             tvNotificationBadge.setVisibility(View.GONE);
         }
+    }
+
+    private String formatNotificationBadgeCount(int count) {
+        if (count > 99) {
+            return "99+";
+        }
+
+        return String.valueOf(count);
     }
 
     private void showNotificationDialog() {
@@ -750,22 +950,23 @@ public class DashboardActivity extends AppCompatActivity {
 
         LinearLayout notificationListContainer = dialog.findViewById(R.id.notificationListContainer);
         TextView tvDialogNotifCount = dialog.findViewById(R.id.tvDialogNotifCount);
-        TextView btnCloseNotification = dialog.findViewById(R.id.btnCloseNotification);
+        ImageView btnCloseNotification = dialog.findViewById(R.id.btnCloseNotification);
         TextView btnMarkAllRead = dialog.findViewById(R.id.btnMarkAllRead);
 
         btnCloseNotification.setOnClickListener(v -> dialog.dismiss());
         notificationListContainer.removeAllViews();
 
-        diseaseResultRef.orderByChild("time/timestamp")
+        notificationItemsRef.orderByChild("timestamp_ms")
+                .limitToLast(50)
                 .addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
-                    public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
+                    public void onDataChange(@NonNull DataSnapshot notificationSnapshot) {
                         sensorLatestRef.addListenerForSingleValueEvent(new ValueEventListener() {
                             @Override
                             public void onDataChange(@NonNull DataSnapshot sensorSnapshot) {
                                 notificationListContainer.removeAllViews();
 
-                                List<NotificationItem> allItems = buildNotificationItems(diseaseSnapshot, sensorSnapshot);
+                                List<NotificationItem> allItems = buildNotificationItems(notificationSnapshot, sensorSnapshot);
                                 List<NotificationItem> unreadItems = new ArrayList<>();
 
                                 for (NotificationItem item : allItems) {
@@ -774,7 +975,7 @@ public class DashboardActivity extends AppCompatActivity {
                                     }
                                 }
 
-                                tvDialogNotifCount.setText(String.valueOf(unreadItems.size()));
+                                tvDialogNotifCount.setText(formatNotificationBadgeCount(unreadItems.size()));
 
                                 if (unreadItems.isEmpty()) {
                                     TextView emptyText = new TextView(DashboardActivity.this);
@@ -793,6 +994,7 @@ public class DashboardActivity extends AppCompatActivity {
                                 btnMarkAllRead.setOnClickListener(v -> {
                                     markNotificationsAsRead(unreadItems);
                                     dialog.dismiss();
+                                    currentNotificationUnreadCount = 0;
                                     updateNotificationBadge(0);
 
                                     Toast.makeText(
@@ -845,37 +1047,27 @@ public class DashboardActivity extends AppCompatActivity {
             String detectionKey = data.getKey();
 
             Boolean handled = data.child("handled").getValue(Boolean.class);
-            String status = getSafeString(data.child("status"));
-
-            boolean isHandled = false;
 
             if (handled != null && handled) {
-                isHandled = true;
-            }
-
-            if (status != null && status.equalsIgnoreCase("handled")) {
-                isHandled = true;
-            }
-
-            if (isHandled) {
                 continue;
             }
 
-            String className = getDetectionClassNameForCount(data, "disease");
-            String source = getDetectionSource(data);
-            String timestamp = getDetectionTimestamp(data);
+            String title = getSafeString(data.child("title"));
+            String message = getSafeString(data.child("message"));
+            String timestamp = getSafeString(data.child("timestamp"));
+            String priority = getSafeString(data.child("priority"));
             Double confidenceValue = data.child("confidence").getValue(Double.class);
 
             if (detectionKey == null || detectionKey.trim().isEmpty()) {
-                detectionKey = "unknown_detection_" + System.currentTimeMillis();
+                detectionKey = "unknown_notification_" + System.currentTimeMillis();
             }
 
-            if (className == null || className.trim().isEmpty()) {
-                className = "Deteksi";
+            if (title == null || title.trim().isEmpty()) {
+                title = "Deteksi Baru";
             }
 
-            if (source == null || source.trim().isEmpty()) {
-                source = "kamera";
+            if (message == null || message.trim().isEmpty()) {
+                message = "Ada hasil deteksi baru yang belum ditangani.";
             }
 
             if (timestamp == null || timestamp.trim().isEmpty()) {
@@ -885,19 +1077,23 @@ public class DashboardActivity extends AppCompatActivity {
             double confidencePercent = 0;
 
             if (confidenceValue != null) {
-                confidencePercent = confidenceValue * 100;
+                confidencePercent = confidenceValue > 1
+                        ? confidenceValue
+                        : confidenceValue * 100;
+            }
+
+            if (priority == null || priority.trim().isEmpty()) {
+                priority = getPriorityLabel(confidencePercent);
             }
 
             items.add(
                     new NotificationItem(
                             "detection_" + detectionKey,
                             "⚠",
-                            formatClassName(className) + " Terdeteksi",
-                            "Terdeteksi dari " + source +
-                                    " dengan confidence " +
-                                    String.format(Locale.US, "%.1f", confidencePercent) + "%",
+                            title,
+                            message,
                             formatNotificationTime(timestamp),
-                            getPriorityLabel(confidencePercent),
+                            priority,
                             confidencePercent
                     )
             );
@@ -1080,23 +1276,82 @@ public class DashboardActivity extends AppCompatActivity {
         }
     }
 
-    private void loadLatestCarouselImages() {
-        Query query = cameraCapturesRef
-                .orderByChild("uploaded_at")
-                .limitToLast(100);
+    private void loadCameraSnapshotsByGroup(int limit, CameraSnapshotsCallback callback) {
+        List<DataSnapshot> snapshots = new ArrayList<>();
+        int[] pending = {CAMERA_CAPTURE_GROUPS.length};
+        boolean[] cancelled = {false};
 
-        query.addValueEventListener(new ValueEventListener() {
+        for (String group : CAMERA_CAPTURE_GROUPS) {
+            Query query = cameraCapturesRef
+                    .child(group)
+                    .orderByChild("time_info/uploaded_at")
+                    .limitToLast(limit);
+
+            query.addListenerForSingleValueEvent(new ValueEventListener() {
+                @Override
+                public void onDataChange(@NonNull DataSnapshot snapshot) {
+                    for (DataSnapshot data : snapshot.getChildren()) {
+                        snapshots.add(data);
+                    }
+
+                    pending[0]--;
+                    if (pending[0] == 0 && !cancelled[0]) {
+                        callback.onData(snapshots);
+                    }
+                }
+
+                @Override
+                public void onCancelled(@NonNull DatabaseError error) {
+                    if (!cancelled[0]) {
+                        cancelled[0] = true;
+                        callback.onCancelled(error);
+                    }
+                }
+            });
+        }
+    }
+
+    private void loadLatestCarouselImages() {
+        loadCameraSnapshotsByGroup(LATEST_CAMERA_GROUP_LIMIT, new CameraSnapshotsCallback() {
+
             @Override
-            public void onDataChange(@NonNull DataSnapshot snapshot) {
+            public void onData(List<DataSnapshot> snapshots) {
                 List<LatestPhoto> allPhotos = new ArrayList<>();
                 long latestUploadedAt = -1L;
+                List<DataSnapshot> sortedSnapshots = new ArrayList<>(snapshots);
 
-                for (DataSnapshot data : snapshot.getChildren()) {
-                    String imageUrl = getSafeString(data.child("image"));
-                    String label = getSafeString(data.child("label"));
+                Collections.sort(sortedSnapshots, (left, right) -> Long.compare(
+                        getMillisFromSnapshot(
+                                right,
+                                "time_info/uploaded_at",
+                                "time_info/uploaded_at_iso",
+                                "uploaded_at",
+                                "timestamp",
+                                "time"
+                        ),
+                        getMillisFromSnapshot(
+                                left,
+                                "time_info/uploaded_at",
+                                "time_info/uploaded_at_iso",
+                                "uploaded_at",
+                                "timestamp",
+                                "time"
+                        )
+                ));
+
+                for (DataSnapshot data : sortedSnapshots) {
+                    String imageUrl = getCameraImageUrl(data);
+                    String label = getCameraLabel(data);
                     String filename = getSafeString(data.child("filename"));
-                    String time = getSafeString(data.child("time"));
-                    long uploadedAt = getMillisFromSnapshot(data, "uploaded_at", "timestamp", "time");
+                    String time = getCameraDisplayTime(data);
+                    long uploadedAt = getMillisFromSnapshot(
+                            data,
+                            "time_info/uploaded_at",
+                            "time_info/uploaded_at_iso",
+                            "uploaded_at",
+                            "timestamp",
+                            "time"
+                    );
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
@@ -1126,7 +1381,6 @@ public class DashboardActivity extends AppCompatActivity {
                     ));
                 }
 
-                Collections.reverse(allPhotos);
                 latestImageUpdateMillis = latestUploadedAt;
                 updateLastUpdateText();
 
@@ -1209,7 +1463,7 @@ public class DashboardActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onCancelled(@NonNull DatabaseError error) {
+            public void onCancelled(DatabaseError error) {
                 latestImageUrls.clear();
                 latestImageLabels.clear();
                 latestImageAdapter.notifyDataSetChanged();
@@ -1303,21 +1557,39 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadPlantPointCards() {
-        Query query = cameraCapturesRef
-                .orderByChild("uploaded_at")
-                .limitToLast(30);
+        loadCameraSnapshotsByGroup(LATEST_CAMERA_GROUP_LIMIT, new CameraSnapshotsCallback() {
 
-        query.addValueEventListener(new ValueEventListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot snapshot) {
+            public void onData(List<DataSnapshot> snapshots) {
                 LatestPhoto leftPhoto = null;
                 LatestPhoto rightPhoto = null;
                 LatestPhoto hpPhoto = null;
+                List<DataSnapshot> sortedSnapshots = new ArrayList<>(snapshots);
 
-                for (DataSnapshot data : snapshot.getChildren()) {
-                    String imageUrl = getSafeString(data.child("image"));
-                    String label = getSafeString(data.child("label"));
-                    String time = getSafeString(data.child("time"));
+                Collections.sort(sortedSnapshots, (left, right) -> Long.compare(
+                        getMillisFromSnapshot(
+                                left,
+                                "time_info/uploaded_at",
+                                "time_info/uploaded_at_iso",
+                                "uploaded_at",
+                                "timestamp",
+                                "time"
+                        ),
+                        getMillisFromSnapshot(
+                                right,
+                                "time_info/uploaded_at",
+                                "time_info/uploaded_at_iso",
+                                "uploaded_at",
+                                "timestamp",
+                                "time"
+                        )
+                ));
+
+                for (DataSnapshot data : sortedSnapshots) {
+                    String imageUrl = getCameraImageUrl(data);
+                    String label = getCameraLabel(data);
+                    String filename = getSafeString(data.child("filename"));
+                    String time = getCameraDisplayTime(data);
 
                     if (imageUrl == null || imageUrl.trim().isEmpty()) {
                         continue;
@@ -1333,11 +1605,14 @@ public class DashboardActivity extends AppCompatActivity {
 
                     LatestPhoto photo = new LatestPhoto(imageUrl, label, time);
 
-                    if (label.equalsIgnoreCase("A")) {
+                    String labelLower = label.toLowerCase(Locale.US);
+                    String filenameLower = filename == null ? "" : filename.toLowerCase(Locale.US);
+
+                    if (label.equalsIgnoreCase("A") || isFrontPhoto(labelLower, filenameLower)) {
                         leftPhoto = photo;
-                    } else if (label.equalsIgnoreCase("B")) {
+                    } else if (label.equalsIgnoreCase("B") || isBackPhoto(labelLower, filenameLower)) {
                         rightPhoto = photo;
-                    } else if (label.equalsIgnoreCase("HP") || label.equalsIgnoreCase("mobile")) {
+                    } else if (label.equalsIgnoreCase("HP") || isMobilePhoto(labelLower, filenameLower)) {
                         hpPhoto = photo;
                     }
                 }
@@ -1348,37 +1623,18 @@ public class DashboardActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onCancelled(@NonNull DatabaseError error) {
+            public void onCancelled(DatabaseError error) {
 
             }
         });
     }
 
     private void loadCameraSourceCounts() {
-        cameraCapturesRef.addValueEventListener(new ValueEventListener() {
+        cameraSummaryRef.addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
-                int cctvCount = 0;
-                int mobileCount = 0;
-
-                for (DataSnapshot data : snapshot.getChildren()) {
-                    String label = getSafeString(data.child("label"));
-                    String source = getSafeString(data.child("source"));
-                    String filename = getSafeString(data.child("filename"));
-                    String imageUrl = getSafeString(data.child("image"));
-
-                    if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                        continue;
-                    }
-
-                    boolean isMobile = isMobileCameraSource(label, source, filename);
-
-                    if (isMobile) {
-                        mobileCount++;
-                    } else {
-                        cctvCount++;
-                    }
-                }
+                int cctvCount = getIntValue(snapshot.child("cctv_count"));
+                int mobileCount = getIntValue(snapshot.child("mobile_count"));
 
                 tvCctvImageCount.setText(cctvCount + " gambar");
                 tvMobileImageCount.setText(mobileCount + " gambar");
@@ -1791,43 +2047,14 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadTreatmentSummary() {
-        diseaseResultRef.addValueEventListener(new ValueEventListener() {
+        handlingSummaryRef.addValueEventListener(new ValueEventListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                pestResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
-                        updateTreatmentSummaryCounts(diseaseSnapshot, pestSnapshot);
-                    }
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                int unhandledCount = getIntValue(snapshot.child("unhandled_count"));
+                int handledCount = getIntValue(snapshot.child("handled_count"));
 
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError error) {
-                        updateTreatmentSummaryCounts(diseaseSnapshot, null);
-                    }
-                });
-            }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-                tvUnhandledHandlingCount.setText("0");
-                tvHandledHandlingCount.setText("0");
-            }
-        });
-
-        pestResultRef.addValueEventListener(new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
-                diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                        updateTreatmentSummaryCounts(diseaseSnapshot, pestSnapshot);
-                    }
-
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError error) {
-                        updateTreatmentSummaryCounts(null, pestSnapshot);
-                    }
-                });
+                tvUnhandledHandlingCount.setText(String.valueOf(unhandledCount));
+                tvHandledHandlingCount.setText(String.valueOf(handledCount));
             }
 
             @Override
@@ -2248,11 +2475,90 @@ public class DashboardActivity extends AppCompatActivity {
         return String.valueOf(value);
     }
 
+    private String getFirstSafeString(DataSnapshot data, String... paths) {
+        for (String path : paths) {
+            String value = getSafeString(data.child(path));
+
+            if (value != null && !value.trim().isEmpty()) {
+                return value;
+            }
+        }
+
+        return "";
+    }
+
+    private String getCameraImageUrl(DataSnapshot data) {
+        return getFirstSafeString(
+                data,
+                "image_info/image_url",
+                "image",
+                "image_url",
+                "url",
+                "download_url",
+                "firebase_url"
+        );
+    }
+
+    private String getCameraLabel(DataSnapshot data) {
+        return getFirstSafeString(
+                data,
+                "source_info/label",
+                "source_info/source",
+                "label",
+                "source",
+                "point",
+                "titik"
+        );
+    }
+
+    private String getCameraSource(DataSnapshot data) {
+        return getFirstSafeString(data, "source_info/source", "source");
+    }
+
+    private String getCameraDisplayTime(DataSnapshot data) {
+        return getFirstSafeString(
+                data,
+                "time_info/display",
+                "time_info/uploaded_at_iso",
+                "time_info/uploaded_at",
+                "time",
+                "timestamp",
+                "uploaded_at_iso",
+                "uploaded_at"
+        );
+    }
+
+    private int getIntValue(DataSnapshot snapshot) {
+        Integer intValue = snapshot.getValue(Integer.class);
+
+        if (intValue != null) {
+            return intValue;
+        }
+
+        Long longValue = snapshot.getValue(Long.class);
+
+        if (longValue != null) {
+            return longValue.intValue();
+        }
+
+        String text = getSafeString(snapshot);
+
+        try {
+            return Integer.parseInt(text);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     private String getDetectionSource(DataSnapshot data) {
         String source = getSafeString(data.child("source"));
 
         if (source == null || source.trim().isEmpty()) {
-            source = getSafeString(data.child("source_info"));
+            source = getSafeString(data.child("source_info").child("source"));
+        }
+
+        if (source == null || source.trim().isEmpty()) {
+            source = getSafeString(data.child("source_info").child("mode"));
         }
 
         return source;
@@ -2262,19 +2568,19 @@ public class DashboardActivity extends AppCompatActivity {
         String timestamp = getSafeString(data.child("timestamp"));
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
-            timestamp = getSafeString(data.child("time").child("timestamp_iso"));
-        }
-
-        if (timestamp == null || timestamp.trim().isEmpty()) {
-            timestamp = getSafeString(data.child("time").child("timestamp"));
-        }
-
-        if (timestamp == null || timestamp.trim().isEmpty()) {
             timestamp = getSafeString(data.child("time").child("created_at_iso"));
         }
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("timestamp_iso"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
             timestamp = getSafeString(data.child("time").child("created_at"));
+        }
+
+        if (timestamp == null || timestamp.trim().isEmpty()) {
+            timestamp = getSafeString(data.child("time").child("timestamp"));
         }
 
         if (timestamp == null || timestamp.trim().isEmpty()) {
@@ -2364,6 +2670,7 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         long latestUpdateMillis = Math.max(latestSensorUpdateMillis, latestImageUpdateMillis);
+        updateOnlineStatus(latestUpdateMillis);
 
         if (latestUpdateMillis <= 0) {
             tvLastUpdate.setText("Terakhir diupdate -");
@@ -2371,6 +2678,63 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         tvLastUpdate.setText("Terakhir diupdate " + formatRelativeTime(latestUpdateMillis));
+    }
+
+    private void updateOnlineStatus(long latestUpdateMillis) {
+        if (tvOnlineStatus == null) {
+            return;
+        }
+
+        boolean hasInternet = isPhoneInternetAvailable();
+        boolean hasFreshData = latestUpdateMillis > 0
+                && System.currentTimeMillis() - latestUpdateMillis <= ONLINE_DATA_FRESHNESS_MILLIS;
+
+        if (!hasInternet) {
+            tvOnlineStatus.setText("Offline");
+            setOnlineDotColor("#D92D20");
+        } else if (!hasFreshData) {
+            tvOnlineStatus.setText("Tidak Sinkron");
+            setOnlineDotColor("#F79009");
+        } else {
+            tvOnlineStatus.setText("Aktif - Online");
+            setOnlineDotColor("#12B76A");
+        }
+    }
+
+    private boolean isPhoneInternetAvailable() {
+        ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        if (manager == null) {
+            return false;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Network network = manager.getActiveNetwork();
+
+            if (network == null) {
+                return false;
+            }
+
+            NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+
+            return capabilities != null
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        }
+
+        android.net.NetworkInfo networkInfo = manager.getActiveNetworkInfo();
+        return networkInfo != null && networkInfo.isConnected();
+    }
+
+    private void setOnlineDotColor(String colorHex) {
+        if (viewOnlineDot == null) {
+            return;
+        }
+
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.OVAL);
+        drawable.setColor(Color.parseColor(colorHex));
+        viewOnlineDot.setBackground(drawable);
     }
 
     private String formatRelativeTime(long timestampMillis) {
@@ -2560,30 +2924,20 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void loadDetectionSummary() {
-        diseaseResultRef.addValueEventListener(new ValueEventListener() {
+        detectionSummaryRef.addValueEventListener(new ValueEventListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                pestResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
-                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
-                        int pestCount = countActiveDetections(pestSnapshot, "pest");
-                        int totalCount = diseaseCount + pestCount;
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                int diseaseCount = getIntValue(snapshot.child("disease_count"));
+                int pestCount = getIntValue(snapshot.child("pest_count"));
+                int totalCount = getIntValue(snapshot.child("total_count"));
 
-                        tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
-                        tvPestDetectedCount.setText(String.valueOf(pestCount));
-                        tvTotalDetectedCount.setText(String.valueOf(totalCount));
-                    }
+                if (totalCount <= 0) {
+                    totalCount = diseaseCount + pestCount;
+                }
 
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError error) {
-                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
-
-                        tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
-                        tvPestDetectedCount.setText("0");
-                        tvTotalDetectedCount.setText(String.valueOf(diseaseCount));
-                    }
-                });
+                tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
+                tvPestDetectedCount.setText(String.valueOf(pestCount));
+                tvTotalDetectedCount.setText(String.valueOf(totalCount));
             }
 
             @Override
@@ -2591,38 +2945,6 @@ public class DashboardActivity extends AppCompatActivity {
                 tvDiseaseDetectedCount.setText("0");
                 tvPestDetectedCount.setText("0");
                 tvTotalDetectedCount.setText("0");
-            }
-        });
-
-        pestResultRef.addValueEventListener(new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot pestSnapshot) {
-                diseaseResultRef.addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot diseaseSnapshot) {
-                        int diseaseCount = countActiveDetections(diseaseSnapshot, "disease");
-                        int pestCount = countActiveDetections(pestSnapshot, "pest");
-                        int totalCount = diseaseCount + pestCount;
-
-                        tvDiseaseDetectedCount.setText(String.valueOf(diseaseCount));
-                        tvPestDetectedCount.setText(String.valueOf(pestCount));
-                        tvTotalDetectedCount.setText(String.valueOf(totalCount));
-                    }
-
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError error) {
-                        int pestCount = countActiveDetections(pestSnapshot, "pest");
-
-                        tvDiseaseDetectedCount.setText("0");
-                        tvPestDetectedCount.setText(String.valueOf(pestCount));
-                        tvTotalDetectedCount.setText(String.valueOf(pestCount));
-                    }
-                });
-            }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-                tvPestDetectedCount.setText("0");
             }
         });
     }
@@ -2857,10 +3179,13 @@ public class DashboardActivity extends AppCompatActivity {
 
     private void markDetectionAsHandled(String detectionKey, String mode) {
         Map<String, Object> updates = new HashMap<>();
+        String handledAt = getCurrentIsoTime();
 
         updates.put("handled", true);
-        updates.put("status", "handled");
-        updates.put("handled_at", getCurrentIsoTime());
+        updates.put("handled_at", handledAt);
+        updates.put("status/handled", true);
+        updates.put("status/status", "handled");
+        updates.put("status/handled_at", handledAt);
 
         DatabaseReference targetRef = mode != null && mode.equalsIgnoreCase("pest")
                 ? pestResultRef
@@ -2986,25 +3311,18 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private String getDetectionImageUrl(DataSnapshot data) {
-        String imageUrl = getSafeString(data.child("image_url"));
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("image"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("imageUrl"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("url"));
-        }
-
-        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-            imageUrl = getSafeString(data.child("result").child("image_url"));
-        }
-
-        return imageUrl;
+        return getFirstSafeString(
+                data,
+                "image/annotated_image_url",
+                "image/image_url",
+                "image/input_image_url",
+                "annotated_image_url",
+                "image_url",
+                "image",
+                "imageUrl",
+                "url",
+                "result/image_url"
+        );
     }
 
     private DataSnapshot getBestPestSnapshot(DataSnapshot data) {

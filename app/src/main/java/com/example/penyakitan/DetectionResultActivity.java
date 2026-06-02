@@ -4,8 +4,8 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
-import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -13,12 +13,21 @@ import androidx.appcompat.app.AppCompatActivity;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
 public class DetectionResultActivity extends AppCompatActivity {
 
     private ImageView imgResult;
-    private Button btnClose;
+    private ImageView btnClose;
 
     private TextView txtStatus;
+    private TextView tvResultFileName;
+    private TextView tvResultDate;
+    private TextView tvResultObject;
+    private LinearLayout cardDiseaseResult;
+    private LinearLayout cardPestResult;
     private TextView txtDiseaseName;
     private TextView txtDiseaseConfidence;
     private TextView txtDiseaseDescription;
@@ -29,6 +38,7 @@ public class DetectionResultActivity extends AppCompatActivity {
     private TextView txtPestSolution;
 
     private TextView txtRawResponse;
+    private String scanMode = "disease";
 
     private static DetectionResultActivity instance;
 
@@ -43,6 +53,12 @@ public class DetectionResultActivity extends AppCompatActivity {
         btnClose = findViewById(R.id.btnClose);
 
         txtStatus = findViewById(R.id.txtStatus);
+        tvResultFileName = findViewById(R.id.tvResultFileName);
+        tvResultDate = findViewById(R.id.tvResultDate);
+        tvResultObject = findViewById(R.id.tvResultObject);
+
+        cardDiseaseResult = findViewById(R.id.cardDiseaseResult);
+        cardPestResult = findViewById(R.id.cardPestResult);
 
         txtDiseaseName = findViewById(R.id.txtDiseaseName);
         txtDiseaseConfidence = findViewById(R.id.txtDiseaseConfidence);
@@ -55,10 +71,37 @@ public class DetectionResultActivity extends AppCompatActivity {
 
         txtRawResponse = findViewById(R.id.txtRawResponse);
 
+        readScanModeFromIntent();
+        applyResultModeVisibility();
+        updateResultHeader(null);
         showImageFromIntent();
         showResultFromIntent();
 
         btnClose.setOnClickListener(v -> finish());
+    }
+
+    private void readScanModeFromIntent() {
+        String modeFromIntent = getIntent().getStringExtra("scan_mode");
+
+        if (modeFromIntent != null && !modeFromIntent.trim().isEmpty()) {
+            scanMode = modeFromIntent.trim().toLowerCase();
+        }
+
+        if (!scanMode.equals("pest") && !scanMode.equals("disease")) {
+            scanMode = "disease";
+        }
+    }
+
+    private void applyResultModeVisibility() {
+        if (scanMode.equals("pest")) {
+            cardDiseaseResult.setVisibility(View.GONE);
+            cardPestResult.setVisibility(View.VISIBLE);
+            tvResultObject.setText("Hama");
+        } else {
+            cardDiseaseResult.setVisibility(View.VISIBLE);
+            cardPestResult.setVisibility(View.GONE);
+            tvResultObject.setText("Penyakit");
+        }
     }
 
     private void showImageFromIntent() {
@@ -79,10 +122,15 @@ public class DetectionResultActivity extends AppCompatActivity {
     private void showResultFromIntent() {
         int responseCode = getIntent().getIntExtra("responseCode", -1);
         String responseMessage = getIntent().getStringExtra("responseMessage");
+        updateResultHeader(responseMessage);
 
         if (responseCode == 200 || responseCode == 201) {
             txtStatus.setVisibility(View.VISIBLE);
-            txtStatus.setText("Inference berhasil");
+            if (scanMode.equals("pest")) {
+                txtStatus.setText("Inference hama berhasil");
+            } else {
+                txtStatus.setText("Inference penyakit berhasil");
+            }
 
             parseInferenceResult(responseMessage);
 
@@ -113,89 +161,11 @@ public class DetectionResultActivity extends AppCompatActivity {
 
             JSONObject json = new JSONObject(responseMessage);
 
-            // =========================
-            // PARSE DISEASE
-            // =========================
-            if (json.has("disease") && !json.isNull("disease")) {
-                JSONObject disease = json.getJSONObject("disease");
-
-                String diseaseClass = disease.optString("class_name", "-");
-                double diseaseConfidence = disease.optDouble("confidence", 0);
-
-                txtDiseaseName.setText("Nama Penyakit: " + formatClassName(diseaseClass));
-                txtDiseaseConfidence.setText("Confidence: " + formatPercent(diseaseConfidence));
-                txtDiseaseDescription.setText("Deskripsi: " + getDiseaseDescription(diseaseClass));
-
+            if (scanMode.equals("pest")) {
+                parsePestResult(json);
             } else {
-                txtDiseaseName.setText("Nama Penyakit: -");
-                txtDiseaseConfidence.setText("Confidence: -");
-                txtDiseaseDescription.setText("Deskripsi: Tidak ada data penyakit.");
+                parseDiseaseResult(json);
             }
-
-            // =========================
-            // PARSE DISEASE RECOMMENDATION
-            // =========================
-            String diseaseSolution = getDiseaseSolutionFromJson(json);
-
-            if (diseaseSolution.trim().isEmpty()) {
-                diseaseSolution = "-";
-            }
-
-            txtDiseaseSolution.setText("Solusi: " + diseaseSolution);
-
-            // =========================
-            // PARSE PEST
-            // =========================
-            if (json.has("pest") && !json.isNull("pest")) {
-                JSONArray pestArray = json.getJSONArray("pest");
-
-                if (pestArray.length() > 0) {
-                    StringBuilder pestNames = new StringBuilder();
-                    StringBuilder pestConfidences = new StringBuilder();
-
-                    for (int i = 0; i < pestArray.length(); i++) {
-                        JSONObject pest = pestArray.getJSONObject(i);
-
-                        String pestClass = pest.optString("class_name", "-");
-                        double pestConfidence = pest.optDouble("confidence", 0);
-
-                        pestNames.append(i + 1)
-                                .append(". ")
-                                .append(formatClassName(pestClass));
-
-                        pestConfidences.append(i + 1)
-                                .append(". ")
-                                .append(formatPercent(pestConfidence));
-
-                        if (i < pestArray.length() - 1) {
-                            pestNames.append("\n");
-                            pestConfidences.append("\n");
-                        }
-                    }
-
-                    txtPestName.setText("Nama Hama:\n" + pestNames);
-                    txtPestConfidence.setText("Confidence:\n" + pestConfidences);
-
-                } else {
-                    txtPestName.setText("Nama Hama: Tidak ada hama terdeteksi");
-                    txtPestConfidence.setText("Confidence: -");
-                }
-
-            } else {
-                txtPestName.setText("Nama Hama: Tidak ada data hama");
-                txtPestConfidence.setText("Confidence: -");
-            }
-
-            // =========================
-            // PARSE PEST RECOMMENDATION
-            // =========================
-            String pestSolution = getPestSolutionFromJson(json);
-
-            if (pestSolution.trim().isEmpty()) {
-                pestSolution = "-";
-            }
-
-            txtPestSolution.setText("Solusi: " + pestSolution);
 
             // Raw response disembunyikan kalau parsing berhasil
             txtRawResponse.setVisibility(View.GONE);
@@ -210,6 +180,219 @@ public class DetectionResultActivity extends AppCompatActivity {
                     "Error: " + e.getMessage() + "\n\nRaw Response:\n" + responseMessage
             );
         }
+    }
+
+    private void updateResultHeader(String responseMessage) {
+        String filename = getIntent().getStringExtra("filename");
+
+        if (filename == null || filename.trim().isEmpty()) {
+            filename = getFilenameFromResponse(responseMessage);
+        }
+
+        if (filename == null || filename.trim().isEmpty()) {
+            filename = "Hasil deteksi";
+        }
+
+        tvResultFileName.setText(filename);
+        tvResultDate.setText(getDateFromResponse(responseMessage));
+    }
+
+    private String getFilenameFromResponse(String responseMessage) {
+        try {
+            if (responseMessage == null || responseMessage.trim().isEmpty()) {
+                return "";
+            }
+
+            JSONObject json = new JSONObject(responseMessage);
+            String filename = getFirstJsonString(
+                    json,
+                    "filename",
+                    "file_name",
+                    "name_file",
+                    "nameFile",
+                    "name",
+                    "original_filename",
+                    "originalFileName"
+            );
+
+            if (!filename.trim().isEmpty()) {
+                return filename;
+            }
+
+            if (json.has("data") && !json.isNull("data")) {
+                JSONObject data = json.getJSONObject("data");
+                filename = getFirstJsonString(
+                        data,
+                        "filename",
+                        "file_name",
+                        "name_file",
+                        "nameFile",
+                        "name",
+                        "original_filename",
+                        "originalFileName"
+                );
+                if (!filename.trim().isEmpty()) {
+                    return filename;
+                }
+
+                JSONObject imageInfo = data.optJSONObject("image_info");
+                if (imageInfo != null) {
+                    filename = getFirstJsonString(
+                            imageInfo,
+                            "filename",
+                            "file_name",
+                            "name_file",
+                            "nameFile",
+                            "name",
+                            "original_filename",
+                            "originalFileName"
+                    );
+                    if (!filename.trim().isEmpty()) {
+                        return filename;
+                    }
+                }
+            }
+
+            if (json.has("image") && !json.isNull("image")) {
+                filename = getFirstJsonString(
+                        json.getJSONObject("image"),
+                        "filename",
+                        "file_name",
+                        "name_file",
+                        "nameFile",
+                        "name",
+                        "original_filename",
+                        "originalFileName"
+                );
+                if (!filename.trim().isEmpty()) {
+                    return filename;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return "";
+    }
+
+    private String getDateFromResponse(String responseMessage) {
+        try {
+            if (responseMessage != null && !responseMessage.trim().isEmpty()) {
+                JSONObject json = new JSONObject(responseMessage);
+                String timestamp = getFirstJsonString(
+                        json,
+                        "created_at",
+                        "timestamp",
+                        "time",
+                        "date",
+                        "uploaded_at"
+                );
+
+                if (!timestamp.trim().isEmpty()) {
+                    return timestamp;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        SimpleDateFormat outputFormat = new SimpleDateFormat(
+                "dd MMM yyyy, HH:mm",
+                new Locale("id", "ID")
+        );
+        return outputFormat.format(new Date());
+    }
+
+    private String getFirstJsonString(JSONObject json, String... keys) {
+        for (String key : keys) {
+            String value = json.optString(key, "");
+
+            if (value != null && !value.trim().isEmpty()) {
+                return value;
+            }
+        }
+
+        return "";
+    }
+
+    private void parseDiseaseResult(JSONObject json) throws Exception {
+        if (json.has("disease") && !json.isNull("disease")) {
+            JSONObject disease = json.getJSONObject("disease");
+
+            String diseaseClass = disease.optString("class_name", "-");
+            double diseaseConfidence = disease.optDouble("confidence", 0);
+            boolean isDetected = disease.optBoolean("is_detected", diseaseConfidence >= 0.60);
+            int thresholdPercent = disease.optInt("threshold_percent", 60);
+
+            if (!isDetected) {
+                txtStatus.setText("Confidence di bawah " + thresholdPercent + "%, hasil belum valid");
+            }
+
+            txtDiseaseName.setText("Nama Penyakit: " + formatClassName(diseaseClass));
+            txtDiseaseConfidence.setText("Confidence: " + formatPercent(diseaseConfidence));
+            txtDiseaseDescription.setText("Deskripsi: " + getDiseaseDescription(diseaseClass));
+
+        } else {
+            txtDiseaseName.setText("Nama Penyakit: -");
+            txtDiseaseConfidence.setText("Confidence: -");
+            txtDiseaseDescription.setText("Deskripsi: Tidak ada data penyakit.");
+        }
+
+        String diseaseSolution = getDiseaseSolutionFromJson(json);
+
+        if (diseaseSolution.trim().isEmpty()) {
+            diseaseSolution = "-";
+        }
+
+        txtDiseaseSolution.setText("Solusi: " + diseaseSolution);
+    }
+
+    private void parsePestResult(JSONObject json) throws Exception {
+        if (json.has("pest") && !json.isNull("pest")) {
+            JSONArray pestArray = json.getJSONArray("pest");
+
+            if (pestArray.length() > 0) {
+                StringBuilder pestNames = new StringBuilder();
+                StringBuilder pestConfidences = new StringBuilder();
+
+                for (int i = 0; i < pestArray.length(); i++) {
+                    JSONObject pest = pestArray.getJSONObject(i);
+
+                    String pestClass = pest.optString("class_name", "-");
+                    double pestConfidence = pest.optDouble("confidence", 0);
+
+                    pestNames.append(i + 1)
+                            .append(". ")
+                            .append(formatClassName(pestClass));
+
+                    pestConfidences.append(i + 1)
+                            .append(". ")
+                            .append(formatPercent(pestConfidence));
+
+                    if (i < pestArray.length() - 1) {
+                        pestNames.append("\n");
+                        pestConfidences.append("\n");
+                    }
+                }
+
+                txtPestName.setText("Nama Hama:\n" + pestNames);
+                txtPestConfidence.setText("Confidence:\n" + pestConfidences);
+
+            } else {
+                txtPestName.setText("Nama Hama: Tidak ada hama terdeteksi");
+                txtPestConfidence.setText("Confidence: -");
+            }
+
+        } else {
+            txtPestName.setText("Nama Hama: Tidak ada data hama");
+            txtPestConfidence.setText("Confidence: -");
+        }
+
+        String pestSolution = getPestSolutionFromJson(json);
+
+        if (pestSolution.trim().isEmpty()) {
+            pestSolution = "-";
+        }
+
+        txtPestSolution.setText("Solusi: " + pestSolution);
     }
 
     private void setDefaultResult() {

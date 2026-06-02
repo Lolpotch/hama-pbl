@@ -24,7 +24,7 @@ public class DetectionDetailActivity extends AppCompatActivity {
     private TextView tvMode, tvSource, tvConfidence;
     private TextView tvSolution;
     private ProgressBar progressConfidence;
-    private TextView btnClose;
+    private ImageView btnClose;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
