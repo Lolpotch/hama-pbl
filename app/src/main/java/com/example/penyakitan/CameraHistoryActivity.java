@@ -85,11 +85,12 @@ public class CameraHistoryActivity extends AppCompatActivity {
         btnBackHistory.setOnClickListener(v -> finish());
 
         recyclerView = findViewById(R.id.recyclerView);
-        layoutManager = new GridLayoutManager(this, 2);
+        int historyColumnCount = getResources().getBoolean(R.bool.is_tablet_layout) ? 3 : 2;
+        layoutManager = new GridLayoutManager(this, historyColumnCount);
         layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
             @Override
             public int getSpanSize(int position) {
-                return adapter != null && adapter.isFooterPosition(position) ? 2 : 1;
+                return adapter != null && adapter.isFooterPosition(position) ? historyColumnCount : 1;
             }
         });
         recyclerView.setLayoutManager(layoutManager);

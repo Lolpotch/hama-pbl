@@ -315,6 +315,42 @@
                     android:orientation="horizontal">
 
                     <TextView
+                        android:id="@+id/tvDetailDetectedNameLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Nama Penyakit"
+                        android:textColor="#344054"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvDetailDetectedName"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.2"
+                        android:gravity="end"
+                        android:text="Fungal Leaf Spot"
+                        android:textColor="#1D2939"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="#E3E6E1" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -342,6 +378,35 @@
                     android:layout_marginTop="10dp"
                     android:max="100"
                     android:progress="77" />
+
+                <View
+                    android:id="@+id/viewDetailEnvironmentDivider"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="#E3E6E1" />
+
+                <TextView
+                    android:id="@+id/tvDetailEnvironmentLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Kondisi Saat Deteksi"
+                    android:textColor="#344054"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvDetailEnvironment"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_result_solution"
+                    android:lineSpacingExtra="4dp"
+                    android:padding="12dp"
+                    android:text="Suhu 27.7°C · RH 68.9%"
+                    android:textColor="#475467"
+                    android:textSize="14sp" />
 
             </LinearLayout>
 

@@ -146,6 +146,7 @@ public class DashboardActivity extends AppCompatActivity {
     private final List<View> carouselDots = new ArrayList<>();
     private final List<DetectionAlertItem> treatmentHistoryItems = new ArrayList<>();
     private final List<DetectionAlertItem> latestDetectionItems = new ArrayList<>();
+    private boolean isTabletLayout = false;
 
     private static final String PREF_NOTIF = "notification_pref";
     private static final String PREF_READ_KEYS = "read_notification_keys";
@@ -174,11 +175,13 @@ public class DashboardActivity extends AppCompatActivity {
     private final Runnable carouselRunnable = new Runnable() {
         @Override
         public void run() {
-            if (latestImageUrls.size() > 1 && viewPagerLatestImages != null) {
+            int pageCount = getLatestCarouselPageCount();
+
+            if (pageCount > 1 && viewPagerLatestImages != null) {
                 int currentItem = viewPagerLatestImages.getCurrentItem();
                 int nextItem = currentItem + 1;
 
-                if (nextItem >= latestImageUrls.size()) {
+                if (nextItem >= pageCount) {
                     nextItem = 0;
                 }
 
@@ -297,8 +300,9 @@ public class DashboardActivity extends AppCompatActivity {
 
         viewPagerLatestImages = findViewById(R.id.viewPagerLatestImages);
         viewPagerLatestImages.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        isTabletLayout = getResources().getBoolean(R.bool.is_tablet_layout);
 
-        latestImageAdapter = new LatestImageAdapter(latestImageUrls);
+        latestImageAdapter = new LatestImageAdapter(latestImageUrls, latestImageLabels, isTabletLayout);
         viewPagerLatestImages.setAdapter(latestImageAdapter);
 
         viewPagerLatestImages.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
@@ -306,8 +310,10 @@ public class DashboardActivity extends AppCompatActivity {
             public void onPageSelected(int position) {
                 super.onPageSelected(position);
 
-                if (position >= 0 && position < latestImageLabels.size()) {
-                    tvCarouselLabel.setText(latestImageLabels.get(position));
+                int imagePosition = getLatestImageIndexForPage(position);
+
+                if (imagePosition >= 0 && imagePosition < latestImageLabels.size()) {
+                    tvCarouselLabel.setText(latestImageLabels.get(imagePosition));
                 }
 
                 updateCarouselDots(position);
@@ -854,6 +860,8 @@ public class DashboardActivity extends AppCompatActivity {
     }
 
     private void updateCarouselDots(int activePosition) {
+        int pageCount = getLatestCarouselPageCount();
+
         for (int i = 0; i < carouselDots.size(); i++) {
             View dot = carouselDots.get(i);
 
@@ -861,7 +869,7 @@ public class DashboardActivity extends AppCompatActivity {
                 continue;
             }
 
-            if (i < latestImageUrls.size()) {
+            if (i < pageCount) {
                 dot.setVisibility(View.VISIBLE);
 
                 if (i == activePosition) {
@@ -928,6 +936,22 @@ public class DashboardActivity extends AppCompatActivity {
         } else {
             tvNotificationBadge.setVisibility(View.GONE);
         }
+    }
+
+    private int getLatestCarouselPageCount() {
+        if (isTabletLayout) {
+            return (latestImageUrls.size() + 1) / 2;
+        }
+
+        return latestImageUrls.size();
+    }
+
+    private int getLatestImageIndexForPage(int pagePosition) {
+        if (isTabletLayout) {
+            return pagePosition * 2;
+        }
+
+        return pagePosition;
     }
 
     private String formatNotificationBadgeCount(int count) {
@@ -1119,7 +1143,7 @@ public class DashboardActivity extends AppCompatActivity {
                                 title,
                                 "Suhu saat ini " + String.format(Locale.US, "%.1f", suhu) +
                                         "°C. Batas normal: 25–28°C.",
-                                sensorTimestamp,
+                                formatNotificationTime(sensorTimestamp),
                                 "High",
                                 100
                         )
@@ -1138,7 +1162,7 @@ public class DashboardActivity extends AppCompatActivity {
                                 title,
                                 "Kelembaban saat ini " + String.format(Locale.US, "%.1f", humidity) +
                                         "% RH. Batas normal: 65–78% RH.",
-                                sensorTimestamp,
+                                formatNotificationTime(sensorTimestamp),
                                 "High",
                                 100
                         )
@@ -1229,6 +1253,17 @@ public class DashboardActivity extends AppCompatActivity {
             return "-";
         }
 
+        long millis = parseNotificationTimeMillis(timestamp);
+
+        if (millis > 0) {
+            SimpleDateFormat displayFormat = new SimpleDateFormat(
+                    "dd MMM, HH.mm",
+                    new Locale("id", "ID")
+            );
+            displayFormat.setTimeZone(TimeZone.getDefault());
+            return displayFormat.format(new Date(millis));
+        }
+
         try {
             String[] dateTime = timestamp.split(" ");
 
@@ -1274,6 +1309,71 @@ public class DashboardActivity extends AppCompatActivity {
         } catch (Exception e) {
             return timestamp;
         }
+    }
+
+    private long parseNotificationTimeMillis(String timestamp) {
+        String text = timestamp == null ? "" : timestamp.trim();
+
+        if (text.isEmpty() || text.equals("-")) {
+            return -1L;
+        }
+
+        if (text.matches(".*\\.\\d{4,}([+-]\\d{2}:\\d{2}|Z)$")) {
+            text = text.replaceFirst("\\.(\\d{3})\\d+([+-]\\d{2}:\\d{2}|Z)$", ".$1$2");
+        }
+
+        String[] utcPatterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        };
+
+        for (String pattern : utcPatterns) {
+            long millis = parseNotificationDateMillis(text, pattern, TimeZone.getTimeZone("UTC"));
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        String[] localPatterns = {
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd HH:mm",
+                "yyyy/MM/dd HH:mm:ss",
+                "yyyy/MM/dd HH:mm",
+                "dd-MM-yyyy HH:mm:ss",
+                "dd-MM-yyyy HH:mm",
+                "dd/MM/yyyy HH:mm:ss",
+                "dd/MM/yyyy HH:mm"
+        };
+
+        for (String pattern : localPatterns) {
+            long millis = parseNotificationDateMillis(text, pattern, TimeZone.getDefault());
+
+            if (millis > 0) {
+                return millis;
+            }
+        }
+
+        return -1L;
+    }
+
+    private long parseNotificationDateMillis(String text, String pattern, TimeZone timeZone) {
+        try {
+            SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.US);
+            format.setLenient(false);
+            format.setTimeZone(timeZone);
+
+            Date date = format.parse(text);
+
+            if (date != null) {
+                return date.getTime();
+            }
+        } catch (Exception ignored) {
+        }
+
+        return -1L;
     }
 
     private void loadCameraSnapshotsByGroup(int limit, CameraSnapshotsCallback callback) {
@@ -1551,7 +1651,7 @@ public class DashboardActivity extends AppCompatActivity {
     private void startAutoCarousel() {
         carouselHandler.removeCallbacks(carouselRunnable);
 
-        if (latestImageUrls.size() > 1) {
+        if (getLatestCarouselPageCount() > 1) {
             carouselHandler.postDelayed(carouselRunnable, 3000);
         }
     }
@@ -1782,10 +1882,14 @@ public class DashboardActivity extends AppCompatActivity {
             confidencePercent = confidenceValue * 100;
         }
 
+        String environmentLabel = getDetectionEnvironmentLabel(data);
         String description =
                 "Mode: " + mode +
                         "\nSource: " + source +
-                        "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
+                        "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%" +
+                        (environmentLabel.trim().isEmpty()
+                                ? ""
+                                : "\nKondisi saat deteksi: " + environmentLabel);
 
         AlertPanel alert = new AlertPanel(
                 source,
@@ -2600,6 +2704,65 @@ public class DashboardActivity extends AppCompatActivity {
         }
 
         return timestamp;
+    }
+
+    private String getDetectionEnvironmentLabel(DataSnapshot data) {
+        Double temperature = getDoubleValue(data.child("environment").child("temperature"));
+        Double humidity = getDoubleValue(data.child("environment").child("humidity"));
+
+        if (temperature == null) {
+            temperature = getDoubleValue(data.child("sensor_snapshot").child("temperature"));
+        }
+
+        if (humidity == null) {
+            humidity = getDoubleValue(data.child("sensor_snapshot").child("humidity"));
+        }
+
+        if (temperature == null) {
+            temperature = getDoubleValue(data.child("temperature"));
+        }
+
+        if (humidity == null) {
+            humidity = getDoubleValue(data.child("humidity"));
+        }
+
+        StringBuilder builder = new StringBuilder();
+
+        if (temperature != null) {
+            builder.append(String.format(Locale.US, "Suhu %.1f°C", temperature));
+        }
+
+        if (humidity != null) {
+            if (builder.length() > 0) {
+                builder.append(" · ");
+            }
+            builder.append(String.format(Locale.US, "RH %.1f%%", humidity));
+        }
+
+        return builder.toString();
+    }
+
+    private Double getDoubleValue(DataSnapshot snapshot) {
+        if (snapshot == null || !snapshot.exists()) {
+            return null;
+        }
+
+        Object value = snapshot.getValue();
+
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+
+        if (value instanceof String) {
+            try {
+                String text = ((String) value).trim();
+                return text.isEmpty() ? null : Double.parseDouble(text);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     private String getTimestampFromImageFields(DataSnapshot data) {

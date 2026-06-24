@@ -280,10 +280,6 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             }
 
             if (recommendation == null || recommendation.trim().isEmpty()) {
-                recommendation = getSafeString(data.child("recommendation_detail").child("summary"));
-            }
-
-            if (recommendation == null || recommendation.trim().isEmpty()) {
                 recommendation = handled
                         ? "Deteksi sudah ditandai selesai."
                         : "Belum ada rekomendasi penanganan.";
@@ -291,11 +287,15 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
 
             double confidencePercent = confidenceValue == null ? 0 : confidenceValue * 100;
             String fileName = getDetectionFileName(data, imageUrl, timestamp);
+            String environmentLabel = getDetectionEnvironmentLabel(data);
 
             String description = "Status: " + (handled ? "Selesai Ditangani" : "Belum Ditangani") +
                     "\nMode: " + mode +
                     "\nSource: " + source +
-                    "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%";
+                    "\nConfidence: " + String.format(Locale.US, "%.2f", confidencePercent) + "%" +
+                    (environmentLabel.trim().isEmpty()
+                            ? ""
+                            : "\nKondisi saat deteksi: " + environmentLabel);
 
             if (handled && handledAt != null && !handledAt.trim().isEmpty()) {
                 description += "\nDitangani: " + handledAt;
@@ -318,6 +318,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
                     source,
                     String.format(Locale.US, "%.2f", confidencePercent),
                     confidencePercent,
+                    environmentLabel,
                     timestamp,
                     getTimestampMillis(timestamp)
             ));
@@ -332,6 +333,12 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         }
 
         if (!matchesHandlingFilter(data)) {
+            return false;
+        }
+
+        if (defaultMode.equalsIgnoreCase("pest")
+                && data.child("pest").exists()
+                && getBestPestSnapshot(data) == null) {
             return false;
         }
 
@@ -415,10 +422,13 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             return;
         }
 
+        int columnCount = getHistoryColumnCount();
         LinearLayout currentRow = null;
 
         for (int i = 0; i < treatmentList.size(); i++) {
-            if (i % 2 == 0) {
+            int columnIndex = i % columnCount;
+
+            if (columnIndex == 0) {
                 currentRow = new LinearLayout(this);
                 currentRow.setOrientation(LinearLayout.HORIZONTAL);
 
@@ -440,11 +450,9 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
                     1f
             );
 
-            if (i % 2 == 0) {
-                cardParams.setMargins(0, 0, dpToPx(6), 0);
-            } else {
-                cardParams.setMargins(dpToPx(6), 0, 0, 0);
-            }
+            int leftMargin = columnIndex == 0 ? 0 : dpToPx(6);
+            int rightMargin = columnIndex == columnCount - 1 ? 0 : dpToPx(6);
+            cardParams.setMargins(leftMargin, 0, rightMargin, 0);
 
             view.setLayoutParams(cardParams);
 
@@ -453,16 +461,22 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             }
         }
 
-        if (treatmentList.size() % 2 != 0 && detectionContainer.getChildCount() > 0) {
+        int lastRowItemCount = treatmentList.size() % columnCount;
+
+        if (lastRowItemCount != 0 && detectionContainer.getChildCount() > 0) {
             LinearLayout lastRow = (LinearLayout) detectionContainer.getChildAt(
                     detectionContainer.getChildCount() - 1
             );
 
-            LinearLayout emptySpace = new LinearLayout(this);
-            LinearLayout.LayoutParams emptyParams = new LinearLayout.LayoutParams(0, 1, 1f);
-            emptyParams.setMargins(dpToPx(6), 0, 0, 0);
-            emptySpace.setLayoutParams(emptyParams);
-            lastRow.addView(emptySpace);
+            for (int i = lastRowItemCount; i < columnCount; i++) {
+                LinearLayout emptySpace = new LinearLayout(this);
+                LinearLayout.LayoutParams emptyParams = new LinearLayout.LayoutParams(0, 1, 1f);
+                int leftMargin = i == 0 ? 0 : dpToPx(6);
+                int rightMargin = i == columnCount - 1 ? 0 : dpToPx(6);
+                emptyParams.setMargins(leftMargin, 0, rightMargin, 0);
+                emptySpace.setLayoutParams(emptyParams);
+                lastRow.addView(emptySpace);
+            }
         }
 
         if (shouldShowLoadAllButton()) {
@@ -539,6 +553,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         intent.putExtra("disease_name", alert.diseaseName);
         intent.putExtra("date", item.rawTimestamp);
         intent.putExtra("description", alert.description);
+        intent.putExtra("environment_label", item.environmentLabel);
         intent.putExtra("solution", alert.solution);
         intent.putExtra("handled", item.handled);
         intent.putExtra("mode", item.mode);
@@ -828,7 +843,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             DataSnapshot bestPest = getBestPestSnapshot(data);
 
             if (bestPest != null) {
-                Double pestConfidence = bestPest.child("confidence").getValue(Double.class);
+                Double pestConfidence = getConfidenceFraction(bestPest);
 
                 if (pestConfidence != null) {
                     return pestConfidence;
@@ -836,13 +851,13 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             }
         }
 
-        Double confidence = data.child("confidence").getValue(Double.class);
+        Double confidence = getConfidenceFraction(data);
 
         if (confidence != null) {
             return confidence;
         }
 
-        confidence = data.child("prediction").child("confidence").getValue(Double.class);
+        confidence = getConfidenceFraction(data.child("prediction"));
 
         if (confidence != null) {
             return confidence;
@@ -851,10 +866,10 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         confidence = data.child("prediction").child("score").getValue(Double.class);
 
         if (confidence != null) {
-            return confidence;
+            return normalizeConfidenceFraction(confidence);
         }
 
-        return data.child("result").child("confidence").getValue(Double.class);
+        return getConfidenceFraction(data.child("result"));
     }
 
     private String getDetectionImageUrl(DataSnapshot data) {
@@ -924,6 +939,42 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         return timestamp;
     }
 
+    private String getDetectionEnvironmentLabel(DataSnapshot data) {
+        Double temperature = getDoubleValue(data.child("environment").child("temperature"));
+        Double humidity = getDoubleValue(data.child("environment").child("humidity"));
+
+        if (temperature == null) {
+            temperature = getDoubleValue(data.child("sensor_snapshot").child("temperature"));
+        }
+
+        if (humidity == null) {
+            humidity = getDoubleValue(data.child("sensor_snapshot").child("humidity"));
+        }
+
+        if (temperature == null) {
+            temperature = getDoubleValue(data.child("temperature"));
+        }
+
+        if (humidity == null) {
+            humidity = getDoubleValue(data.child("humidity"));
+        }
+
+        StringBuilder builder = new StringBuilder();
+
+        if (temperature != null) {
+            builder.append(String.format(Locale.US, "Suhu %.1f°C", temperature));
+        }
+
+        if (humidity != null) {
+            if (builder.length() > 0) {
+                builder.append(" · ");
+            }
+            builder.append(String.format(Locale.US, "RH %.1f%%", humidity));
+        }
+
+        return builder.toString();
+    }
+
     private String getTimestampFromImageFields(DataSnapshot data) {
         String[] imageValues = {
                 getSafeString(data.child("input_image_url")),
@@ -972,7 +1023,10 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         DataSnapshot bestDetectionSnapshot = data.child("prediction").child("best_detection");
 
         if (bestDetectionSnapshot.exists()) {
-            return bestDetectionSnapshot;
+            Double confidence = getConfidenceFraction(bestDetectionSnapshot);
+            if (confidence != null && isDetectedPestItem(bestDetectionSnapshot, confidence)) {
+                return bestDetectionSnapshot;
+            }
         }
 
         DataSnapshot pestSnapshot = data.child("pest");
@@ -985,9 +1039,13 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         double bestConfidence = -1;
 
         for (DataSnapshot pestItem : pestSnapshot.getChildren()) {
-            Double confidence = pestItem.child("confidence").getValue(Double.class);
+            Double confidence = getConfidenceFraction(pestItem);
 
             if (confidence == null) {
+                continue;
+            }
+
+            if (!isDetectedPestItem(pestItem, confidence)) {
                 continue;
             }
 
@@ -998,6 +1056,45 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         }
 
         return bestSnapshot;
+    }
+
+    private boolean isDetectedPestItem(DataSnapshot pestItem, double confidence) {
+        Boolean detected = pestItem.child("is_detected").getValue(Boolean.class);
+
+        if (detected != null) {
+            return detected;
+        }
+
+        Double threshold = getThresholdFraction(pestItem);
+        return threshold == null || confidence >= threshold;
+    }
+
+    private Double getConfidenceFraction(DataSnapshot snapshot) {
+        Double confidencePercent = snapshot.child("confidence_percent").getValue(Double.class);
+
+        if (confidencePercent != null) {
+            return confidencePercent / 100;
+        }
+
+        return normalizeConfidenceFraction(snapshot.child("confidence").getValue(Double.class));
+    }
+
+    private Double getThresholdFraction(DataSnapshot snapshot) {
+        Double thresholdPercent = snapshot.child("threshold_percent").getValue(Double.class);
+
+        if (thresholdPercent != null) {
+            return thresholdPercent / 100;
+        }
+
+        return normalizeConfidenceFraction(snapshot.child("threshold").getValue(Double.class));
+    }
+
+    private Double normalizeConfidenceFraction(Double value) {
+        if (value == null) {
+            return null;
+        }
+
+        return value > 1 ? value / 100 : value;
     }
 
     private String formatClassName(String className) {
@@ -1107,13 +1204,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             return builder.toString().trim();
         }
 
-        String summary = getSafeString(recommendation.child("summary"));
-
-        if (summary != null && !summary.trim().isEmpty()) {
-            return summary;
-        }
-
-        return getSafeString(recommendation);
+        return "";
     }
 
     private void appendRecommendationActions(StringBuilder builder, DataSnapshot actionsSnapshot) {
@@ -1190,8 +1281,35 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         }
     }
 
+    private Double getDoubleValue(DataSnapshot snapshot) {
+        if (snapshot == null || !snapshot.exists()) {
+            return null;
+        }
+
+        Object value = snapshot.getValue();
+
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+
+        if (value instanceof String) {
+            try {
+                String text = ((String) value).trim();
+                return text.isEmpty() ? null : Double.parseDouble(text);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     private int dpToPx(int dp) {
         return (int) (dp * getResources().getDisplayMetrics().density);
+    }
+
+    private int getHistoryColumnCount() {
+        return getResources().getBoolean(R.bool.is_tablet_layout) ? 3 : 2;
     }
 
     private static class TreatmentHistoryItem {
@@ -1202,6 +1320,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
         String source;
         String confidence;
         double confidenceValue;
+        String environmentLabel;
         String rawTimestamp;
         long timestampMillis;
 
@@ -1213,6 +1332,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
                 String source,
                 String confidence,
                 double confidenceValue,
+                String environmentLabel,
                 String rawTimestamp,
                 long timestampMillis
         ) {
@@ -1223,6 +1343,7 @@ public class TreatmentHistoryActivity extends AppCompatActivity {
             this.source = source;
             this.confidence = confidence;
             this.confidenceValue = confidenceValue;
+            this.environmentLabel = environmentLabel;
             this.rawTimestamp = rawTimestamp;
             this.timestampMillis = timestampMillis;
         }

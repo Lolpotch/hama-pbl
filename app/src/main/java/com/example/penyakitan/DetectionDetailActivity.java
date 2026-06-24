@@ -3,6 +3,7 @@ package com.example.penyakitan;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -20,9 +21,11 @@ import java.util.TimeZone;
 public class DetectionDetailActivity extends AppCompatActivity {
 
     private ImageView imgDetail;
+    private View environmentDivider;
     private TextView tvTitle, tvDate, tvStatus;
-    private TextView tvMode, tvSource, tvConfidence;
-    private TextView tvSolution;
+    private TextView tvMode, tvSource, tvDetectedNameLabel, tvDetectedName, tvConfidence;
+    private TextView tvEnvironmentLabel;
+    private TextView tvEnvironment, tvSolution;
     private ProgressBar progressConfidence;
     private ImageView btnClose;
 
@@ -38,7 +41,12 @@ public class DetectionDetailActivity extends AppCompatActivity {
 
         tvMode = findViewById(R.id.tvDetailMode);
         tvSource = findViewById(R.id.tvDetailSource);
+        tvDetectedNameLabel = findViewById(R.id.tvDetailDetectedNameLabel);
+        tvDetectedName = findViewById(R.id.tvDetailDetectedName);
         tvConfidence = findViewById(R.id.tvDetailConfidence);
+        environmentDivider = findViewById(R.id.viewDetailEnvironmentDivider);
+        tvEnvironmentLabel = findViewById(R.id.tvDetailEnvironmentLabel);
+        tvEnvironment = findViewById(R.id.tvDetailEnvironment);
         progressConfidence = findViewById(R.id.progress_detail_confidence);
 
         tvSolution = findViewById(R.id.tvDetailSolution);
@@ -48,6 +56,8 @@ public class DetectionDetailActivity extends AppCompatActivity {
         String fileName = getIntent().getStringExtra("file_name");
         String diseaseName = getIntent().getStringExtra("disease_name");
         String date = getIntent().getStringExtra("date");
+        String description = getIntent().getStringExtra("description");
+        String environmentLabel = getIntent().getStringExtra("environment_label");
         String solution = getIntent().getStringExtra("solution");
         boolean handled = getIntent().getBooleanExtra("handled", false);
         String mode = getIntent().getStringExtra("mode");
@@ -69,17 +79,60 @@ public class DetectionDetailActivity extends AppCompatActivity {
         tvDate.setText(formatDisplayTime(date));
         tvMode.setText(formatLabel(safeText(mode, "-")));
         tvSource.setText(formatLabel(safeText(source, "-")));
+        tvDetectedNameLabel.setText(getDetectedNameLabel(mode, diseaseName));
+        tvDetectedName.setText(getDetectedNameText(mode, diseaseName));
 
         double confidenceValue = parseConfidence(confidence);
         tvConfidence.setText(String.format(Locale.US, "%.2f%%", confidenceValue));
         progressConfidence.setProgress((int) Math.round(confidenceValue));
         setConfidenceColor(confidenceValue);
+        setEnvironmentText(environmentLabel, description);
 
         tvSolution.setText(safeText(solution, "Belum ada rekomendasi penanganan."));
 
         setHandledStatus(handled);
 
         btnClose.setOnClickListener(v -> finish());
+    }
+
+    private void setEnvironmentText(String environmentLabel, String description) {
+        if (tvEnvironment == null) {
+            return;
+        }
+
+        String environment = safeText(environmentLabel, "");
+
+        if (environment.trim().isEmpty()) {
+            environment = extractDescriptionValue(description, "Kondisi saat deteksi");
+        }
+
+        if (environment.trim().isEmpty()) {
+            if (environmentDivider != null) environmentDivider.setVisibility(View.GONE);
+            if (tvEnvironmentLabel != null) tvEnvironmentLabel.setVisibility(View.GONE);
+            tvEnvironment.setVisibility(View.GONE);
+            return;
+        }
+
+        if (environmentDivider != null) environmentDivider.setVisibility(View.VISIBLE);
+        if (tvEnvironmentLabel != null) tvEnvironmentLabel.setVisibility(View.VISIBLE);
+        tvEnvironment.setVisibility(View.VISIBLE);
+        tvEnvironment.setText(environment);
+    }
+
+    private String extractDescriptionValue(String description, String key) {
+        if (description == null || description.trim().isEmpty()) {
+            return "";
+        }
+
+        String[] lines = description.split("\n");
+
+        for (String line : lines) {
+            if (line.toLowerCase(Locale.US).startsWith(key.toLowerCase(Locale.US) + ":")) {
+                return line.substring(line.indexOf(":") + 1).trim();
+            }
+        }
+
+        return "";
     }
 
     private void setHandledStatus(boolean handled) {
@@ -119,7 +172,8 @@ public class DetectionDetailActivity extends AppCompatActivity {
                 return 0;
             }
 
-            return Double.parseDouble(value);
+            double confidence = Double.parseDouble(value);
+            return confidence <= 1 ? confidence * 100 : confidence;
         } catch (Exception e) {
             return 0;
         }
@@ -147,6 +201,50 @@ public class DetectionDetailActivity extends AppCompatActivity {
         return value;
     }
 
+    private String getDetectedNameLabel(String mode, String detectedName) {
+        if (mode != null && mode.equalsIgnoreCase("pest")) {
+            return "Nama Hama";
+        }
+
+        if (isHealthyDetection(detectedName)) {
+            return "Status Tanaman";
+        }
+
+        return "Nama Penyakit";
+    }
+
+    private String getDetectedNameText(String mode, String detectedName) {
+        if (mode != null && mode.equalsIgnoreCase("disease") && isHealthyDetection(detectedName)) {
+            return "Sehat";
+        }
+
+        return formatDetectionName(safeText(detectedName, "Tidak Diketahui"));
+    }
+
+    private boolean isHealthyDetection(String detectedName) {
+        if (detectedName == null) {
+            return false;
+        }
+
+        String normalized = detectedName.trim()
+                .toLowerCase(Locale.US)
+                .replace("_", " ")
+                .replace("-", " ");
+
+        return normalized.equals("healthy")
+                || normalized.equals("sehat")
+                || normalized.equals("tanaman sehat")
+                || normalized.contains("healthy");
+    }
+
+    private String formatDetectionName(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "Tidak Diketahui";
+        }
+
+        return value.trim().replace("_", " ");
+    }
+
     private String getDisplayTitle(String fileName, String imageUrl, String fallback) {
         if (fileName != null && !fileName.trim().isEmpty()) {
             return fileName;
@@ -158,7 +256,7 @@ public class DetectionDetailActivity extends AppCompatActivity {
             return fileName;
         }
 
-        return safeText(fallback, "Tidak Diketahui");
+        return formatDetectionName(safeText(fallback, "Tidak Diketahui"));
     }
 
     private String extractFileName(String imageUrl) {

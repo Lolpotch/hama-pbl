@@ -44,4 +44,14 @@
         <item name="android:indeterminateTint">#0B7A2A</item>
     </style>
 
+    <style name="ShapeAppearance.Penyakitan.LatestPhoto" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">18dp</item>
+    </style>
+
+    <style name="ShapeAppearance.Penyakitan.AlertPhoto" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">12dp</item>
+    </style>
+
 </resources>

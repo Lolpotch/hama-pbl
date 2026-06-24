@@ -2,6 +2,7 @@ package com.example.penyakitan;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -21,6 +22,12 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import androidx.work.BackoffPolicy;
+import androidx.work.Constraints;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.NetworkType;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
 
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
@@ -36,8 +43,14 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.util.concurrent.TimeUnit;
 
 public class CameraCaptureActivity extends AppCompatActivity {
+
+    private static final String PREF_PENDING_UPLOAD = "pending_upload";
+    private static final String KEY_PENDING_IMAGE_PATH = "pending_image_path";
+    private static final String KEY_PENDING_FILENAME = "pending_filename";
+    private static final String KEY_PENDING_SCAN_MODE = "pending_scan_mode";
 
     private final String functionUrl =
             "https://mobile-image-uploader-971770758012.asia-southeast2.run.app";
@@ -119,7 +132,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 }
         );
 
-        checkCameraPermission();
+        if (!resumePendingUploadFromIntent() && !resumePendingUploadFromStorage()) {
+            checkCameraPermission();
+        }
     }
 
     private void readScanModeFromIntent() {
@@ -223,6 +238,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
     private void uploadThenInference(File imageFile) {
         new Thread(() -> {
             final Uri finalImageUri = capturedImageUri;
+            long totalStartMs = System.currentTimeMillis();
 
             try {
                 runOnUiThread(() -> {
@@ -235,8 +251,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     localFilename = imageFile.getName();
                 }
 
+                long tokenStartMs = System.currentTimeMillis();
                 String firebaseIdToken = getFirebaseIdToken();
-                Log.d("FIREBASE_TOKEN", firebaseIdToken);
+                logDuration("firebase_token", tokenStartMs);
 
                 long originalSize = imageFile.length();
 
@@ -244,7 +261,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 Log.d("IMAGE_COMPRESS", "Original size bytes: " + originalSize);
                 Log.d("IMAGE_COMPRESS", "Original size KB: " + (originalSize / 1024));
 
+                long compressStartMs = System.currentTimeMillis();
                 compressImageFileInPlace(imageFile);
+                logDuration("compress_image", compressStartMs);
 
                 long compressedSize = imageFile.length();
 
@@ -260,13 +279,16 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     }
                 });
 
+                long uploadStartMs = System.currentTimeMillis();
                 String uploadResponse = uploadImageFile(imageFile, firebaseIdToken);
+                logDuration("upload_image", uploadStartMs);
                 int uploadResponseCode = lastHttpResponseCode;
 
                 Log.d("UPLOAD_RESPONSE", "Code: " + uploadResponseCode);
-                Log.d("UPLOAD_RESPONSE", "Response: " + uploadResponse);
+                Log.d("UPLOAD_RESPONSE", "Body length: " + safeLength(uploadResponse));
 
                 if (uploadResponseCode != 200 && uploadResponseCode != 201) {
+                    savePendingUpload(imageFile);
                     runOnUiThread(() -> {
                         if (tvUploadStatus != null) {
                             tvUploadStatus.setText("Upload gagal, membuka hasil...");
@@ -295,7 +317,8 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     uploadedImageUrl = bucketPublicUrl + serverFilename;
                 }
 
-                Log.d("UPLOAD_IMAGE_URL", uploadedImageUrl);
+                Log.d("UPLOAD_IMAGE_URL", "Image URL tersedia: " + (!uploadedImageUrl.trim().isEmpty()));
+
 
                 runOnUiThread(() -> {
                     if (tvUploadStatus != null) {
@@ -307,11 +330,21 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     }
                 });
 
+                long inferenceStartMs = System.currentTimeMillis();
                 String inferenceResponse = runInferenceFromImageUrl(uploadedImageUrl, firebaseIdToken);
+                logDuration("inference_api", inferenceStartMs);
                 int inferenceResponseCode = lastHttpResponseCode;
 
                 Log.d("INFERENCE_RESPONSE", "Code: " + inferenceResponseCode);
-                Log.d("INFERENCE_RESPONSE", "Response: " + inferenceResponse);
+                Log.d("INFERENCE_RESPONSE", "Body length: " + safeLength(inferenceResponse));
+                logServerInferenceTiming(inferenceResponse);
+                logDuration("total_upload_then_inference", totalStartMs);
+
+                if (inferenceResponseCode == 200 || inferenceResponseCode == 201) {
+                    clearPendingUpload();
+                } else {
+                    savePendingUpload(imageFile);
+                }
 
                 runOnUiThread(() -> {
                     if (tvUploadStatus != null) {
@@ -331,6 +364,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
             } catch (Exception e) {
                 Log.e("UPLOAD_INFERENCE_ERROR", e.toString());
+                savePendingUpload(imageFile);
 
                 String errorJson = "{"
                         + "\"error\":\"Terjadi error saat upload atau inference\","
@@ -409,7 +443,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
             URL url = new URL(inferenceApiUrl + query);
 
-            Log.d("INFERENCE_URL", url.toString());
+            Log.d("INFERENCE_URL", "Endpoint inference siap dipanggil");
 
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
@@ -443,6 +477,74 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 conn.disconnect();
             }
         }
+    }
+
+    private boolean resumePendingUploadFromIntent() {
+        boolean retryPending = getIntent().getBooleanExtra("retry_pending_upload", false);
+        String pendingPath = getIntent().getStringExtra("pending_image_path");
+
+        if (!retryPending || pendingPath == null || pendingPath.trim().isEmpty()) {
+            return false;
+        }
+
+        File pendingFile = new File(pendingPath);
+
+        if (!pendingFile.exists()) {
+            Toast.makeText(
+                    this,
+                    "Foto pending tidak ditemukan. Silakan ambil foto ulang.",
+                    Toast.LENGTH_LONG
+            ).show();
+            clearPendingUpload();
+            finish();
+            return true;
+        }
+
+        capturedImageFile = pendingFile;
+        capturedImageUri = Uri.fromFile(pendingFile);
+        localFilename = getIntent().getStringExtra("filename");
+
+        if (localFilename == null || localFilename.trim().isEmpty()) {
+            localFilename = pendingFile.getName();
+        }
+
+        WorkManager.getInstance(this).cancelUniqueWork(PendingInferenceWorker.UNIQUE_WORK_NAME);
+        showUploadScreen(capturedImageUri);
+        tvUploadStatus.setText("Memproses ulang foto yang tersimpan...");
+        uploadThenInference(capturedImageFile);
+        return true;
+    }
+
+    private boolean resumePendingUploadFromStorage() {
+        SharedPreferences prefs = getSharedPreferences(PREF_PENDING_UPLOAD, MODE_PRIVATE);
+        String pendingPath = prefs.getString(KEY_PENDING_IMAGE_PATH, "");
+
+        if (pendingPath == null || pendingPath.trim().isEmpty()) {
+            return false;
+        }
+
+        File pendingFile = new File(pendingPath);
+
+        if (!pendingFile.exists()) {
+            clearPendingUpload();
+            return false;
+        }
+
+        String pendingMode = prefs.getString(KEY_PENDING_SCAN_MODE, scanMode);
+
+        if (pendingMode != null && !pendingMode.trim().isEmpty()) {
+            scanMode = pendingMode;
+        }
+
+        capturedImageFile = pendingFile;
+        capturedImageUri = Uri.fromFile(pendingFile);
+        localFilename = prefs.getString(KEY_PENDING_FILENAME, pendingFile.getName());
+
+        WorkManager.getInstance(this).cancelUniqueWork(PendingInferenceWorker.UNIQUE_WORK_NAME);
+        showUploadScreen(capturedImageUri);
+        tvUploadStatus.setText("Memproses foto pending yang tersimpan...");
+        uploadThenInference(capturedImageFile);
+        return true;
     }
 
     private String getFirebaseIdToken() throws Exception {
@@ -664,6 +766,160 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 .replace("\r", " ");
     }
 
+    private int safeLength(String text) {
+        return text == null ? 0 : text.length();
+    }
+
+    private void logDuration(String stage, long startMs) {
+        long durationMs = System.currentTimeMillis() - startMs;
+        Log.d("INFERENCE_TIMING", stage + " ms: " + durationMs);
+    }
+
+    private void logServerInferenceTiming(String responseMessage) {
+        try {
+            if (responseMessage == null || responseMessage.trim().isEmpty()) {
+                return;
+            }
+
+            JSONObject json = new JSONObject(responseMessage);
+
+            if (json.has("processing_time_seconds")) {
+                Log.d(
+                        "INFERENCE_TIMING",
+                        "server_processing ms: "
+                                + Math.round(json.optDouble("processing_time_seconds", 0) * 1000)
+                );
+            }
+
+            JSONObject performance = json.optJSONObject("performance");
+            if (performance == null) {
+                return;
+            }
+
+            JSONObject stageSeconds = performance.optJSONObject("stage_seconds");
+            if (stageSeconds == null) {
+                return;
+            }
+
+            String[] keys = {
+                    "read_input_image_seconds",
+                    "store_original_image_seconds",
+                    "prediction_and_artifacts_seconds",
+                    "store_result_json_seconds",
+                    "firebase_sync_seconds"
+            };
+
+            for (String key : keys) {
+                if (stageSeconds.has(key)) {
+                    Log.d(
+                            "INFERENCE_TIMING",
+                            "server_" + key.replace("_seconds", "_ms") + ": "
+                                    + Math.round(stageSeconds.optDouble(key, 0) * 1000)
+                    );
+                }
+            }
+        } catch (Exception e) {
+            Log.d("INFERENCE_TIMING", "server_timing_parse_failed: " + e.getMessage());
+        }
+    }
+
+    private void savePendingUpload(File imageFile) {
+        try {
+            if (imageFile == null || !imageFile.exists()) {
+                return;
+            }
+
+            File pendingDir = new File(getFilesDir(), "pending_inference");
+
+            if (!pendingDir.exists() && !pendingDir.mkdirs()) {
+                return;
+            }
+
+            if (localFilename == null || localFilename.trim().isEmpty()) {
+                localFilename = imageFile.getName();
+            }
+
+            File pendingFile = new File(pendingDir, localFilename);
+
+            if (!imageFile.getAbsolutePath().equals(pendingFile.getAbsolutePath())) {
+                copyFile(imageFile, pendingFile);
+            }
+
+            SharedPreferences prefs = getSharedPreferences(PREF_PENDING_UPLOAD, MODE_PRIVATE);
+            prefs.edit()
+                    .putString(KEY_PENDING_IMAGE_PATH, pendingFile.getAbsolutePath())
+                    .putString(KEY_PENDING_FILENAME, localFilename)
+                    .putString(KEY_PENDING_SCAN_MODE, scanMode)
+                    .apply();
+
+            capturedImageFile = pendingFile;
+            capturedImageUri = Uri.fromFile(pendingFile);
+            enqueuePendingInferenceWork();
+        } catch (Exception e) {
+            Log.e("PENDING_UPLOAD", "Gagal menyimpan pending upload: " + e.getMessage());
+        }
+    }
+
+    private void clearPendingUpload() {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREF_PENDING_UPLOAD, MODE_PRIVATE);
+            String pendingPath = prefs.getString(KEY_PENDING_IMAGE_PATH, "");
+            prefs.edit().clear().apply();
+
+            if (pendingPath != null && !pendingPath.trim().isEmpty()) {
+                File pendingFile = new File(pendingPath);
+                File pendingDir = new File(getFilesDir(), "pending_inference");
+
+                if (pendingFile.exists()
+                        && pendingFile.getParentFile() != null
+                        && pendingFile.getParentFile().equals(pendingDir)) {
+                    pendingFile.delete();
+                }
+            }
+
+            WorkManager.getInstance(this).cancelUniqueWork(PendingInferenceWorker.UNIQUE_WORK_NAME);
+        } catch (Exception e) {
+            Log.e("PENDING_UPLOAD", "Gagal membersihkan pending upload: " + e.getMessage());
+        }
+    }
+
+    private void enqueuePendingInferenceWork() {
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build();
+
+        OneTimeWorkRequest retryRequest = new OneTimeWorkRequest.Builder(PendingInferenceWorker.class)
+                .setConstraints(constraints)
+                .setBackoffCriteria(
+                        BackoffPolicy.EXPONENTIAL,
+                        30,
+                        TimeUnit.SECONDS
+                )
+                .build();
+
+        WorkManager.getInstance(this).enqueueUniqueWork(
+                PendingInferenceWorker.UNIQUE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                retryRequest
+        );
+    }
+
+    private void copyFile(File source, File target) throws Exception {
+        FileInputStream inputStream = new FileInputStream(source);
+        FileOutputStream outputStream = new FileOutputStream(target, false);
+
+        byte[] buffer = new byte[8192];
+        int bytesRead;
+
+        while ((bytesRead = inputStream.read(buffer)) != -1) {
+            outputStream.write(buffer, 0, bytesRead);
+        }
+
+        outputStream.flush();
+        outputStream.close();
+        inputStream.close();
+    }
+
     private void openDetectionResult(Uri imageUri, int responseCode, String responseMessage) {
         Intent intent = new Intent(
                 CameraCaptureActivity.this,
@@ -685,9 +941,31 @@ public class CameraCaptureActivity extends AppCompatActivity {
         intent.putExtra("responseCode", responseCode);
         intent.putExtra("responseMessage", responseMessage);
         intent.putExtra("scan_mode", scanMode);
+        addPendingUploadExtras(intent);
 
         startActivity(intent);
         finish();
+    }
+
+    private void addPendingUploadExtras(Intent intent) {
+        SharedPreferences prefs = getSharedPreferences(PREF_PENDING_UPLOAD, MODE_PRIVATE);
+        String pendingPath = prefs.getString(KEY_PENDING_IMAGE_PATH, "");
+
+        if (pendingPath == null || pendingPath.trim().isEmpty()) {
+            return;
+        }
+
+        File pendingFile = new File(pendingPath);
+
+        if (!pendingFile.exists()) {
+            clearPendingUpload();
+            return;
+        }
+
+        intent.putExtra("has_pending_upload", true);
+        intent.putExtra("pending_image_path", pendingPath);
+        intent.putExtra("pending_filename", prefs.getString(KEY_PENDING_FILENAME, localFilename));
+        intent.putExtra("pending_scan_mode", prefs.getString(KEY_PENDING_SCAN_MODE, scanMode));
     }
 
     private void deleteTempImageIfExists() {
